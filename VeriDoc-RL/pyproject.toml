@@ -24,6 +24,8 @@ veridoc-rl-generate-preferences = "veridoc_rl.data.preferences:main"
 veridoc-rl-phase-a-eval = "veridoc_rl.evaluation.reporting:main"
 veridoc-rl-generate-plan = "veridoc_rl.experiments.matrix:main"
 veridoc-rl-compare-reports = "veridoc_rl.evaluation.comparison:main"
+veridoc-rl-prepare-training = "veridoc_rl.training.corpus:main"
+veridoc-rl-generate-training-manifests = "veridoc_rl.training.manifests:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

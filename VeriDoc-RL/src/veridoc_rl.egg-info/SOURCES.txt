@@ -24,6 +24,10 @@ src/veridoc_rl/fixtures/__init__.py
 src/veridoc_rl/fixtures/minimal_form_fixture.json
 src/veridoc_rl/rewards/__init__.py
 src/veridoc_rl/rewards/compose.py
+src/veridoc_rl/training/__init__.py
+src/veridoc_rl/training/corpus.py
+src/veridoc_rl/training/manifests.py
+src/veridoc_rl/training/prompting.py
 src/veridoc_rl/verifiers/__init__.py
 src/veridoc_rl/verifiers/base.py
 src/veridoc_rl/verifiers/form.py
@@ -35,4 +39,5 @@ tests/test_rules.py
 tests/test_schema.py
 tests/test_smoke.py
 tests/test_synthetic_data.py
+tests/test_training.py
 tests/test_verifiers.py

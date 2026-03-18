@@ -52,6 +52,31 @@ training_stages:
     method: "grpo_or_rloo"
     goal: "optimize composite verifier reward"
 
+training_runtime:
+  backend: "verl"
+  prompt_template: "veridoc_v1"
+  phases:
+    phase_b_dpo:
+      algorithm: "dpo"
+      reward_profile: "default"
+      epochs: 1
+      learning_rate: 0.000001
+      beta: 0.1
+    phase_c_grpo:
+      algorithm: "grpo"
+      reward_profile: "rlvr"
+      epochs: 1
+      learning_rate: 0.000001
+      rollout_n: 4
+      kl_coef: 0.02
+    phase_c_rloo:
+      algorithm: "rloo"
+      reward_profile: "rlvr"
+      epochs: 1
+      learning_rate: 0.000001
+      rollout_n: 4
+      kl_coef: 0.02
+
 reward:
   components:
     schema_reward: 0.20

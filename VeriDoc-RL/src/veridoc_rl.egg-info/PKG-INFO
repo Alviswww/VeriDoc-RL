@@ -11,87 +11,221 @@ Requires-Dist: ruff<1,>=0.5; extra == "dev"
 
 # VeriDoc-RL
 
-VeriDoc-RL 是一个面向制式投保单的 RLVR 项目。项目的核心是把 `OCR 后的表单结果 -> 结构化抽取 -> 规则校验 -> verifier-guided reward` 串成完整的后训练闭环。
+VeriDoc-RL 是一个面向制式投保单的 verifier-guided post-training 项目。它把 `OCR token 序列 -> 结构化字段抽取 -> 规则校验 -> verifier reward` 串成统一闭环，用同一套 schema、规则、verifier 和 reward 支持 `SFT / DPO / RLVR` 三条路线。
 
-## 一句话定位
+这份 README 是仓库的主接手文档。后续开新线程时，优先读本文件即可建立对仓库的整体认知，通常不需要再把 `docs/`、`scripts/`、`src/` 整体重新扫一遍。
 
-`输入投保单 OCR/版面结果，输出结构化字段和校验报告，并系统比较 SFT / DPO / RLVR 在字段准确率和规则通过率上的差异。`
+## 1. 仓库定位
 
-## 为什么选投保单
+一句话：
 
-- 字段空间固定，跨字段约束明确，更容易构造高信噪比 reward。
-- 场景天然包含 OCR 错字、勾选框、字段缺失、条件触发等真实难点。
-- 更适合体现文档智能里的 verifier engineering、reward design 和 error analysis。
+`输入投保单 OCR/版面结果，输出 fields + validations，并比较 SFT / DPO / RLVR 在字段准确率、规则通过率和 OCR 噪声鲁棒性上的差异。`
 
-## 第一版范围
+项目强调的不是“再做一个表单抽取任务”，而是：
 
-第一版只做 `投保单`，不混做授信申请表、票据或其他文档任务。
+- 把制式文档抽取建模为 `结构化生成 + 规则校验` 的联合输出问题。
+- 把业务约束改写成可程序化 verifier。
+- 用同一套 verifier 同时服务于：
+  - Phase A 评测
+  - DPO preference 构造
+  - RLVR composite reward
+- 用 bucket 分析、error taxonomy 和 case export 做闭环验证。
 
-- 输入
-  - `pdf_page`
-  - `ocr_tokens`，包含文本、bbox、页号
-  - `form_type`
-- 输出
-  - `fields`，结构化字段结果
-  - `validations`，规则校验结果
+## 2. 当前实现状态
 
-## 字段与规则重点
+### 已完成
 
-第一版字段集控制在 20-30 个，优先覆盖：
+- 统一输入输出 schema
+- synthetic 投保单样本生成
+- 基于规则目录的 reference validations 构造
+- 六类 verifier
+- reward profile / ablation
+- Phase A 单报告评测
+- 多报告对比、Markdown 摘要与 SVG 图表导出
+- experiment matrix 解析与实验计划展开
+- Phase A / B / C 训练语料准备脚手架
+- Phase B / C `verl` 风格训练 manifest 生成
 
-- 投保人/被保人基本信息
-- 证件号、手机号、地址
-- 险种、保额、缴费方式、缴费期限
-- 受益人信息与比例
-- 勾选项、签字、日期类字段
+### 当前仍然是脚手架的部分
 
-规则校验结果统一为：
+- 还没有真正接入模型训练代码或 trainer runtime
+- `verl.yaml` 是训练配置模板，不保证直接可在你的具体 `verl` 环境原样启动
+- 还没有 candidate 采样器、online rollout executor、checkpoint 管理和训练日志聚合
+- 还没有真实的 GRPO / RLOO / DPO trainer 封装
 
-- `rule_id`
-- `status`
-- `message`
+也就是说：仓库已经具备数据、verifier、reward、评测、训练语料准备、训练配置生成这些“后训练工程骨架”，但训练执行器本身仍需要后续接入。
 
-## 默认数据路线
+## 3. 目录与根路径说明
 
-第一版默认使用 `公开空白模板 + 合成填充 + OCR 扰动` 生成数据，不依赖真实敏感保单数据。
+有一个容易踩坑的点：
 
-数据切分按以下维度分桶：
+- git 根目录是外层：`/home/alvis/projects/llm-study/VeriDoc-RL`
+- Python 项目根目录是内层：`/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL`
 
-- 模板族
-- OCR 噪声等级
-- 字段缺失/涂改/遮挡难例
-- 规则复杂度
+下面 README 里的所有命令，默认都在内层项目根目录执行：
 
-训练数据目前支持：
+```bash
+cd /home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL
+```
+
+## 4. 总体架构
+
+从数据到训练的主数据流如下：
+
+1. `src/veridoc_rl/data/synthetic.py`
+   - 生成 synthetic `input/reference/metadata`
+   - 输出 `SFT_gold`、`SFT_silver`、`RL_prompt_only`
+2. `src/veridoc_rl/verifiers/`
+   - 对预测结果做 schema、字段、标准化、跨字段、checkbox、OCR robustness 验证
+3. `src/veridoc_rl/rewards/`
+   - 把 verifier score 组合成 composite reward
+4. `src/veridoc_rl/data/preferences.py`
+   - 用 verifier score 给多候选 prediction 排序
+   - 构造 `DPO_preference`
+5. `src/veridoc_rl/evaluation/reporting.py`
+   - 做单次 Phase A 评测
+   - 输出 overall、bucket、taxonomy、failure cases
+6. `src/veridoc_rl/evaluation/comparison.py`
+   - 对多份评测报告做横向对比
+   - 产出 Markdown 和 SVG 图表
+7. `src/veridoc_rl/training/corpus.py`
+   - 把原始 JSONL 转成训练语料
+   - 支持 Phase A SFT、Phase B DPO、Phase C RLVR
+8. `src/veridoc_rl/training/manifests.py`
+   - 从 experiment matrix 和训练语料路径生成 `verl` 风格 manifest bundle
+
+## 5. 数据契约
+
+### 5.1 输入 schema
+
+每条输入样本的核心结构：
+
+```json
+{
+  "sample_id": "template_a_00001",
+  "form_type": "insurance_application_form",
+  "pdf_page": 1,
+  "ocr_tokens": [
+    {
+      "text": "投保人姓名",
+      "bbox": [10, 20, 60, 40],
+      "page": 1
+    }
+  ]
+}
+```
+
+### 5.2 输出 schema
+
+模型必须输出：
+
+```json
+{
+  "sample_id": "template_a_00001",
+  "fields": {
+    "policyholder_name": "张三"
+  },
+  "validations": [
+    {
+      "rule_id": "required.policyholder_name",
+      "status": "pass",
+      "message": "policyholder_name is present"
+    }
+  ]
+}
+```
+
+### 5.3 训练前数据类型
+
+仓库当前支持四类上游 JSONL：
 
 - `SFT_gold`
 - `SFT_silver`
 - `RL_prompt_only`
 - `DPO_preference`
 
-## 训练路线
+### 5.4 训练语料类型
 
-### Phase A
+`src/veridoc_rl/training/corpus.py` 会把它们转成三类下游训练语料：
 
-- 建立 synthetic SFT baseline
-- 确保输出稳定映射到统一的 `fields + validations` schema
-- 输出 bucket 指标、error taxonomy 和 case export
+- `phase_a_sft`
+  - `messages = [system, user, assistant]`
+- `phase_b_dpo`
+  - `system_prompt + prompt + chosen + rejected`
+- `phase_c_rlvr`
+  - `system_prompt + prompt + reward_profile + metadata`
 
-### Phase B
+## 6. 字段、规则、bucket 与 reward
 
-- 用 verifier 对候选输出打分
-- 生成 preference 对
-- 训练 DPO baseline
+### 6.1 字段范围
 
-### Phase C
+第一版字段覆盖以下方向：
 
-- 复用同一套 verifier 组合做 composite reward
-- 优先跑 `GRPO`
-- 其次补 `RLOO`
+- 投保人/被保人基本信息
+- 证件号、手机号、地址
+- 险种、保额、缴费方式、缴费年限
+- 受益人信息与比例
+- 勾选项
+- 签字/日期类字段
 
-## Reward 设计
+实际 synthetic generator 当前稳定覆盖的代表字段包括：
 
-第一版 reward 由以下 verifier 组成：
+- `policyholder_name`
+- `policyholder_gender`
+- `policyholder_id_number`
+- `policyholder_phone`
+- `policyholder_address`
+- `insured_name`
+- `insured_gender`
+- `insured_id_number`
+- `insured_birth_date`
+- `relation_policyholder_to_insured`
+- `product_name`
+- `coverage_amount`
+- `currency`
+- `payment_mode`
+- `payment_period_years`
+- `beneficiary_name`
+- `beneficiary_ratio`
+- `signature_present`
+- `application_date`
+- `checkboxes`
+- `auto_debit_account`
+
+### 6.2 规则目录
+
+规则定义集中在 `src/veridoc_rl/rules.py`，文档版目录在 `docs/rules_catalog.md`。
+
+当前规则包括三大类：
+
+- required
+  - `required.policyholder_name`
+  - `required.policyholder_id_number`
+  - `required.insured_name`
+- format
+  - `format.policyholder_phone`
+  - `format.policyholder_id_number`
+  - `format.application_date`
+- consistency / checkbox
+  - `consistency.birth_date_vs_id_number`
+  - `consistency.beneficiary_ratio_sum`
+  - `consistency.policyholder_insured_relation`
+  - `consistency.product_payment_combo`
+  - `checkbox.payment_mode_exclusive`
+  - `checkbox.auto_debit_requires_account`
+
+### 6.3 Bucket 维度
+
+仓库统一按四个维度做分桶：
+
+- `template_family`
+- `ocr_noise_level`
+- `hard_case_type`
+- `rule_complexity`
+
+### 6.4 Reward 组件
+
+当前 reward 组件：
 
 - `schema_reward`
 - `field_match_reward`
@@ -100,49 +234,127 @@ VeriDoc-RL 是一个面向制式投保单的 RLVR 项目。项目的核心是把
 - `checkbox_logic_reward`
 - `ocr_robustness_reward`
 
-当前仓库已经支持 reward profile 和 ablation 入口，包括：
+支持的 reward profile：
 
 - `default`
 - `rlvr`
 - `rlvr_without_cross_field_consistency`
 - `rlvr_without_checkbox_logic`
 
-## 主指标
+## 7. 代码模块索引
 
-- Field-level F1
-- Form-level exact match
-- Rule pass rate
-- Validation match rate
-- Invalid JSON rate
-- OCR-noise bucket performance
+### 7.1 `src/veridoc_rl/schema.py`
 
-## 当前已接通能力
+统一 dataclass schema：
 
-### 数据
+- `OCRToken`
+- `FormInput`
+- `ValidationResult`
+- `FormOutput`
+- `validate_prediction_payload`
 
-- synthetic form generator，输出 `input`、`reference` 和 bucket metadata
-- 支持生成 `SFT_gold` / `SFT_silver` / `RL_prompt_only`
-- 支持从多候选预测生成 `DPO_preference`
+### 7.2 `src/veridoc_rl/normalizers.py`
 
-### Verifier
+字段标准化工具：
 
-- schema
-- field match
-- normalization
-- cross-field consistency
-- checkbox logic
-- OCR robustness
+- `normalize_phone`
+- `normalize_id_number`
+- `normalize_date`
+- `normalize_amount`
+- `normalize_checkbox_value`
+- `normalize_known_field`
 
-### 评测
+### 7.3 `src/veridoc_rl/data/synthetic.py`
 
-- overall 汇总指标
-- bucket 维度切分统计
-- error taxonomy 聚合
-- failure case export
-- composite reward 汇总
-- 多 report 对比摘要与 SVG 图表导出
+synthetic 数据生成器：
 
-## 快速开始
+- `SyntheticFormGenerator`
+- `build_validations`
+- `apply_ocr_noise`
+- `build_training_record`
+- CLI: `generate_sft_dataset.py`
+
+### 7.4 `src/veridoc_rl/verifiers/`
+
+当前默认 verifier suite 顺序：
+
+1. `SchemaVerifier`
+2. `FieldMatchVerifier`
+3. `NormalizationVerifier`
+4. `CrossFieldConsistencyVerifier`
+5. `CheckboxLogicVerifier`
+6. `OCRRobustnessVerifier`
+
+### 7.5 `src/veridoc_rl/rewards/`
+
+负责：
+
+- reward 权重定义
+- ablation profile
+- verifier result -> total reward 聚合
+
+### 7.6 `src/veridoc_rl/evaluation/`
+
+分两层：
+
+- `metrics.py`
+  - 单样本字段/表单/规则指标
+- `reporting.py`
+  - 单报告汇总、bucket、taxonomy、failure cases
+- `comparison.py`
+  - 多报告对比、Markdown、SVG
+
+### 7.7 `src/veridoc_rl/experiments/`
+
+负责消费 `configs/experiment_matrix.yaml`：
+
+- 解析 experiment matrix
+- 展开实验队列
+- 输出 JSON / Markdown 实验计划
+
+### 7.8 `src/veridoc_rl/training/`
+
+这是本轮新补的训练侧脚手架：
+
+- `prompting.py`
+  - 统一 system prompt
+  - OCR token -> user prompt
+  - reference output -> assistant response
+- `corpus.py`
+  - 原始 JSONL -> 训练语料 JSONL
+- `manifests.py`
+  - 根据 experiment matrix 生成 `phase_b_dpo` / `phase_c_grpo` / `phase_c_rloo`
+  - 输出 `manifest.json`、`README.md`、`verl.yaml`
+
+## 8. `experiment_matrix.yaml` 说明
+
+位置：
+
+```text
+configs/experiment_matrix.yaml
+```
+
+当前它描述五类内容：
+
+- project 目标
+- base model 分层
+- 数据 bucket 与 error taxonomy
+- training stage 定义
+- training runtime 默认项
+- reward component
+- evaluation 关心的 primary metrics 与 ablations
+
+训练 runtime 现在也在这里维护，包含：
+
+- `backend`
+- `prompt_template`
+- `phases.phase_b_dpo`
+- `phases.phase_c_grpo`
+- `phases.phase_c_rloo`
+
+这使得后续接入真实 trainer 时，可以继续沿用同一份 matrix 作为“实验真相来源”。
+
+## 9. 环境与安装
 
 安装开发环境：
 
@@ -150,28 +362,36 @@ VeriDoc-RL 是一个面向制式投保单的 RLVR 项目。项目的核心是把
 pip install -e .[dev]
 ```
 
-运行测试：
+开发依赖当前只有：
+
+- `pytest`
+- `ruff`
+- `mypy`
+
+## 10. 常用命令总表
+
+### 10.1 运行测试
 
 ```bash
 pytest
 ```
 
-运行最小 smoke test：
+### 10.2 最小 smoke
 
 ```bash
 veridoc-rl-smoke
 ```
 
-也可以传入自定义 fixture 或 prediction：
+也可以传 fixture 或 prediction：
 
 ```bash
 veridoc-rl-smoke --fixture-path path/to/fixture.json
 veridoc-rl-smoke --prediction-json '{"sample_id":"s1","fields":{},"validations":[]}'
 ```
 
-## 常用脚本
+### 10.3 生成 synthetic 数据
 
-生成 synthetic SFT 或 prompt-only 数据：
+生成 SFT 数据：
 
 ```bash
 python scripts/generate_sft_dataset.py \
@@ -181,7 +401,17 @@ python scripts/generate_sft_dataset.py \
   --output-path outputs/sft_gold.jsonl
 ```
 
-生成 preference 数据：
+生成 RL prompt-only 数据：
+
+```bash
+python scripts/generate_sft_dataset.py \
+  --count 8 \
+  --seed 7 \
+  --task-type RL_prompt_only \
+  --output-path outputs/rl_prompt_only.jsonl
+```
+
+### 10.4 生成 preference 数据
 
 ```bash
 python scripts/generate_preference_dataset.py \
@@ -191,7 +421,7 @@ python scripts/generate_preference_dataset.py \
   --min-margin 0.05
 ```
 
-运行 phase-a 评测：
+### 10.5 运行单报告评测
 
 ```bash
 python scripts/run_phase_a_eval.py \
@@ -202,7 +432,7 @@ python scripts/run_phase_a_eval.py \
   --failure-only
 ```
 
-运行 reward ablation：
+### 10.6 做 reward ablation
 
 ```bash
 python scripts/run_phase_a_eval.py \
@@ -212,7 +442,7 @@ python scripts/run_phase_a_eval.py \
   --reward-profile rlvr_without_checkbox_logic
 ```
 
-把实验矩阵展开成可执行计划：
+### 10.7 生成实验计划
 
 ```bash
 python scripts/generate_experiment_plan.py \
@@ -221,7 +451,16 @@ python scripts/generate_experiment_plan.py \
   --markdown-path outputs/experiment_plan.md
 ```
 
-对多份 phase-a report 做实验对比并导出图表：
+也可以直接用 console script：
+
+```bash
+veridoc-rl-generate-plan \
+  --matrix-path configs/experiment_matrix.yaml \
+  --output-path outputs/experiment_plan.json \
+  --markdown-path outputs/experiment_plan.md
+```
+
+### 10.8 对比多份评测报告
 
 ```bash
 python scripts/compare_phase_reports.py \
@@ -231,48 +470,180 @@ python scripts/compare_phase_reports.py \
   --output-dir outputs/report_compare
 ```
 
-## 目录结构
+输出目录会生成：
 
-```text
-VeriDoc-RL/
-├─ README.md
-├─ pyproject.toml
-├─ configs/
-│  └─ experiment_matrix.yaml
-├─ docs/
-│  ├─ project_blueprint.md
-│  ├─ resume_alignment.md
-│  └─ rules_catalog.md
-├─ scripts/
-│  ├─ generate_sft_dataset.py
-│  ├─ generate_preference_dataset.py
-│  ├─ run_phase_a_eval.py
-│  ├─ generate_experiment_plan.py
-│  └─ compare_phase_reports.py
-├─ tests/
-└─ src/
-   └─ veridoc_rl/
-      ├─ data/
-      ├─ evaluation/
-      ├─ experiments/
-      ├─ fixtures/
-      ├─ normalizers.py
-      ├─ rewards/
-      ├─ rules.py
-      ├─ schema.py
-      ├─ smoke.py
-      └─ verifiers/
+- `comparison.json`
+- `comparison.md`
+- `rule_pass_rate_comparison.svg`
+- `ocr_noise_level_field_f1.svg`
+
+### 10.9 准备训练语料
+
+Phase A SFT 语料：
+
+```bash
+python scripts/prepare_training_data.py \
+  --input-path outputs/sft_gold.jsonl \
+  --output-path outputs/train.phase_a_sft.jsonl \
+  --stage phase_a_sft
 ```
 
-## 项目总结
+Phase B DPO 语料：
 
-- 把投保单抽取任务改写成可验证奖励问题。
-- 把规则校验直接并入训练目标，而不是只做后处理。
-- 复用同一套 verifier 支持 Phase A 评测、DPO preference 构造和 RLVR reward。
-- 分析 OCR 噪声和模板扰动对模型性能的影响。
+```bash
+python scripts/prepare_training_data.py \
+  --input-path outputs/preferences.jsonl \
+  --output-path outputs/train.phase_b_dpo.jsonl \
+  --stage phase_b_dpo
+```
 
-详细执行方案见 [docs/project_blueprint.md](docs/project_blueprint.md)。
+Phase C RLVR 语料：
 
-项目定位说明见 [docs/resume_alignment.md](docs/resume_alignment.md)。
+```bash
+python scripts/prepare_training_data.py \
+  --input-path outputs/rl_prompt_only.jsonl \
+  --output-path outputs/train.phase_c_rlvr.jsonl \
+  --stage phase_c_rlvr \
+  --reward-profile rlvr
+```
 
-规则目录见 [docs/rules_catalog.md](docs/rules_catalog.md)。
+console script 版本：
+
+```bash
+veridoc-rl-prepare-training \
+  --input-path outputs/rl_prompt_only.jsonl \
+  --output-path outputs/train.phase_c_rlvr.jsonl \
+  --stage phase_c_rlvr \
+  --reward-profile rlvr
+```
+
+### 10.10 生成 Phase B / Phase C 训练 manifest
+
+```bash
+python scripts/generate_training_manifests.py \
+  --matrix-path configs/experiment_matrix.yaml \
+  --train-data-path outputs/train.phase_b_dpo.jsonl \
+  --output-dir outputs/training_bundle
+```
+
+如果要给 RL 阶段生成 bundle，也直接复用：
+
+```bash
+python scripts/generate_training_manifests.py \
+  --matrix-path configs/experiment_matrix.yaml \
+  --train-data-path outputs/train.phase_c_rlvr.jsonl \
+  --output-dir outputs/training_bundle_rl
+```
+
+生成结果默认包含：
+
+- `phase_b_dpo/manifest.json`
+- `phase_b_dpo/README.md`
+- `phase_b_dpo/verl.yaml`
+- `phase_c_grpo/manifest.json`
+- `phase_c_grpo/README.md`
+- `phase_c_grpo/verl.yaml`
+- `phase_c_rloo/manifest.json`
+- `phase_c_rloo/README.md`
+- `phase_c_rloo/verl.yaml`
+
+注意：
+
+- 这是 `verl` 风格模板，不是已经对接完真实 runtime 的训练启动器。
+- 真正接入 `verl` 时，优先补 `launcher`、`checkpoint`、`logging` 和 `reward callback` 四个层面。
+
+## 11. 推荐执行路径
+
+如果从零开始走一遍最小闭环，建议顺序：
+
+1. 安装依赖并跑 `pytest`
+2. 跑 `veridoc-rl-smoke`
+3. 生成 `SFT_gold` 或 `RL_prompt_only`
+4. 准备 Phase A 训练语料
+5. 跑 `run_phase_a_eval.py`
+6. 对不同 reward profile 生成多份 report
+7. 跑 `compare_phase_reports.py`
+8. 构造 `DPO_preference`
+9. 用 `prepare_training_data.py` 导出 `phase_b_dpo`
+10. 用 `generate_training_manifests.py` 生成 `verl` 风格配置模板
+
+## 12. 测试覆盖
+
+当前测试关注：
+
+- schema round-trip
+- rule registry
+- normalizer/verifier/reward
+- synthetic generator
+- preference 构造
+- Phase A 评测
+- experiment matrix 与多报告对比
+- training prompt / corpus / manifest 脚手架
+
+如果你改动以下模块，建议对应补测试：
+
+- `data/` 变更：补 synthetic / preference / training corpus 测试
+- `verifiers/` 变更：补 verifier 与 reward 测试
+- `evaluation/` 变更：补 report / comparison 测试
+- `training/` 变更：补 CLI 输出与 manifest 测试
+
+## 13. 推荐开发流程
+
+建议始终用 worktree 做新增模块开发：
+
+```bash
+cd /home/alvis/projects/llm-study/VeriDoc-RL
+git worktree add /tmp/veridoc-rl-next -b feature_x
+cd /tmp/veridoc-rl-next/VeriDoc-RL
+
+pip install -e .[dev]
+pytest
+
+cd /home/alvis/projects/llm-study/VeriDoc-RL
+git merge --ff-only feature_x
+git worktree remove /tmp/veridoc-rl-next
+```
+
+原因很简单：
+
+- 主工作树保持干净
+- 新线程接手时容易区分“主线代码”和“功能分支”
+- 便于在合并前独立验证
+
+## 14. 已知限制
+
+- synthetic 数据仍然是小规模规则驱动，未覆盖真实保单复杂版式
+- OCR robustness 目前通过 `perturbed_predictions` 近似，不是真实 online augmentation
+- training manifest 是模板级，未对接真实分布式训练执行器
+- 还没有模型推理、candidate 采样和训练日志回流
+
+## 15. 后续优先建议
+
+如果继续开发，优先顺序建议如下：
+
+1. 接入真实 candidate sampler
+2. 用 `verl` 补 Phase B/Phase C launcher
+3. 增加 reward callback / online verifier bridge
+4. 加 checkpoint 目录协议与实验日志聚合
+5. 把 comparison 结果自动写入 experiment registry
+
+## 16. 其他文档何时再看
+
+如果只需要继续编码，通常看 README 就够。
+
+只有在以下情况再读其他文档：
+
+- 需要项目原始目标和排期：`docs/project_blueprint.md`
+- 需要对外表述版本：`docs/resume_alignment.md`
+- 需要规则目录全文：`docs/rules_catalog.md`
+
+## 17. 简版结论
+
+这个仓库现在已经不是单纯的 verifier demo，而是一个可继续往真实后训练系统推进的骨架：
+
+- 数据生成已通
+- verifier/reward 已通
+- 评测与对比已通
+- Phase B / C 训练语料与 manifest 脚手架已通
+
+下一步真正缺的是训练执行器接入，而不是再补一层新的 schema 或脚本包装。

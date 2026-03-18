@@ -20,3 +20,9 @@
   - 读取多份 phase report JSON
   - 输出 overall 对比、bucket 对比、failure digest
   - 生成规则通过率对比图和 OCR-noise bucket 图
+- `python scripts/prepare_training_data.py`
+  - 把 `SFT_gold` / `DPO_preference` / `RL_prompt_only` 数据转成统一训练语料
+  - 输出 Phase A SFT、Phase B DPO、Phase C RLVR 可直接消费的 JSONL
+- `python scripts/generate_training_manifests.py`
+  - 读取 `experiment_matrix.yaml` 里的训练 runtime 配置
+  - 生成 `phase_b_dpo` / `phase_c_grpo` / `phase_c_rloo` 的 `verl` 风格 manifest bundle
