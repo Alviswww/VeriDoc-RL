@@ -129,6 +129,7 @@ VeriDoc-RL 是一个面向制式投保单的 RLVR 项目。项目的核心是把
 - error taxonomy 聚合
 - failure case export
 - composite reward 汇总
+- 多 report 对比摘要与 SVG 图表导出
 
 ## 快速开始
 
@@ -200,6 +201,25 @@ python scripts/run_phase_a_eval.py \
   --reward-profile rlvr_without_checkbox_logic
 ```
 
+把实验矩阵展开成可执行计划：
+
+```bash
+python scripts/generate_experiment_plan.py \
+  --matrix-path configs/experiment_matrix.yaml \
+  --output-path outputs/experiment_plan.json \
+  --markdown-path outputs/experiment_plan.md
+```
+
+对多份 phase-a report 做实验对比并导出图表：
+
+```bash
+python scripts/compare_phase_reports.py \
+  --report sft=outputs/sft_report.json \
+  --report dpo=outputs/dpo_report.json \
+  --report rlvr=outputs/rlvr_report.json \
+  --output-dir outputs/report_compare
+```
+
 ## 目录结构
 
 ```text
@@ -215,12 +235,15 @@ VeriDoc-RL/
 ├─ scripts/
 │  ├─ generate_sft_dataset.py
 │  ├─ generate_preference_dataset.py
-│  └─ run_phase_a_eval.py
+│  ├─ run_phase_a_eval.py
+│  ├─ generate_experiment_plan.py
+│  └─ compare_phase_reports.py
 ├─ tests/
 └─ src/
    └─ veridoc_rl/
       ├─ data/
       ├─ evaluation/
+      ├─ experiments/
       ├─ fixtures/
       ├─ normalizers.py
       ├─ rewards/

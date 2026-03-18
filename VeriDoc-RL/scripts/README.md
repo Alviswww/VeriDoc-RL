@@ -12,3 +12,11 @@
   - 读取 reference/prediction JSONL
   - 跑 verifier suite
   - 输出 bucket 评测、error taxonomy、case export 和 composite reward
+- `python scripts/generate_experiment_plan.py`
+  - 读取 `configs/experiment_matrix.yaml`
+  - 展开 blueprint 中的实验队列
+  - 输出 JSON/Markdown 两种实验计划产物
+- `python scripts/compare_phase_reports.py`
+  - 读取多份 phase report JSON
+  - 输出 overall 对比、bucket 对比、failure digest
+  - 生成规则通过率对比图和 OCR-noise bucket 图

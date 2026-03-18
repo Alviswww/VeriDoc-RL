@@ -26,3 +26,13 @@ python scripts/run_phase_a_eval.py \
   --report-path outputs/phase_a_report.ablation.json \
   --reward-profile rlvr_without_checkbox_logic
 ```
+
+如果要做 Week 7/8 的实验对比和图表导出，可以继续跑：
+
+```bash
+python scripts/compare_phase_reports.py \
+  --report sft=outputs/sft_report.json \
+  --report dpo=outputs/dpo_report.json \
+  --report rlvr=outputs/rlvr_report.json \
+  --output-dir outputs/report_compare
+```

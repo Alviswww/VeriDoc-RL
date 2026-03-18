@@ -22,6 +22,8 @@ veridoc-rl-smoke = "veridoc_rl.smoke:main"
 veridoc-rl-generate-sft = "veridoc_rl.data.synthetic:main"
 veridoc-rl-generate-preferences = "veridoc_rl.data.preferences:main"
 veridoc-rl-phase-a-eval = "veridoc_rl.evaluation.reporting:main"
+veridoc-rl-generate-plan = "veridoc_rl.experiments.matrix:main"
+veridoc-rl-compare-reports = "veridoc_rl.evaluation.comparison:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
