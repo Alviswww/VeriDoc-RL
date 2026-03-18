@@ -55,6 +55,28 @@ training_stages:
 training_runtime:
   backend: "verl"
   prompt_template: "veridoc_v1"
+  common:
+    project_name: "VeriDoc-RL"
+    python_bin: "python3"
+    n_gpus_per_node: 1
+    nnodes: 1
+    prompt_key: "prompt"
+    max_prompt_length: 2048
+    max_response_length: 1024
+    train_batch_size: 32
+    val_batch_size: 32
+    filter_overlong_prompts: false
+    truncation: "left"
+    rollout_engine: "vllm"
+    rollout_mode: "sync"
+    rollout_tensor_parallel_size: 1
+    rollout_gpu_memory_utilization: 0.5
+    ppo_mini_batch_size: 16
+    ppo_micro_batch_size_per_gpu: 4
+    log_prob_micro_batch_size_per_gpu: 4
+    save_freq: 10
+    test_freq: 10
+    reward_manager: "naive"
   phases:
     phase_b_dpo:
       algorithm: "dpo"

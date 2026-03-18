@@ -6,4 +6,5 @@ veridoc-rl-generate-sft = veridoc_rl.data.synthetic:main
 veridoc-rl-generate-training-manifests = veridoc_rl.training.manifests:main
 veridoc-rl-phase-a-eval = veridoc_rl.evaluation.reporting:main
 veridoc-rl-prepare-training = veridoc_rl.training.corpus:main
+veridoc-rl-prepare-verl-runtime = veridoc_rl.training.runtime:main
 veridoc-rl-smoke = veridoc_rl.smoke:main

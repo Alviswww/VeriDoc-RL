@@ -26,3 +26,7 @@
 - `python scripts/generate_training_manifests.py`
   - 读取 `experiment_matrix.yaml` 里的训练 runtime 配置
   - 生成 `phase_b_dpo` / `phase_c_grpo` / `phase_c_rloo` 的 `verl` 风格 manifest bundle
+- `python scripts/prepare_verl_runtime.py`
+  - 读取单个 `manifest.json`
+  - 生成 `launch.sh` 与 `runtime_plan.json`
+  - 对 `phase_c_grpo` / `phase_c_rloo` 可桥接到 `verl.trainer.main_ppo`

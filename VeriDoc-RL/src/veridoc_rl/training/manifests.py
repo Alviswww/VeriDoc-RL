@@ -50,6 +50,7 @@ class TrainingManifest:
     prompt_template: str
     reward_profile: str
     trainer: dict[str, Any]
+    runtime: dict[str, Any]
     notes: list[str]
 
     def to_dict(self) -> dict[str, Any]:
@@ -65,6 +66,7 @@ class TrainingManifest:
             "prompt_template": self.prompt_template,
             "reward_profile": self.reward_profile,
             "trainer": dict(self.trainer),
+            "runtime": dict(self.runtime),
             "notes": list(self.notes),
         }
 
@@ -81,6 +83,7 @@ def build_training_manifests(
     backend = str(runtime.get("backend", "verl"))
     prompt_template = str(runtime.get("prompt_template", "veridoc_v1"))
     phase_configs = _as_mapping(runtime.get("phases"), field_name="training_runtime.phases")
+    common_runtime = _as_mapping(runtime.get("common", {}), field_name="training_runtime.common")
 
     manifests: list[TrainingManifest] = []
     for phase_name, config in phase_configs.items():
@@ -94,7 +97,6 @@ def build_training_manifests(
         reward_profile = str(phase_config.get("reward_profile", "default"))
         manifest_output_dir = output_dir / phase_name
         notes = [
-            "Scaffold only: adapt the generated verl-style YAML to the exact runtime environment before launching training.",
             "The same prompt template and verifier reward profile should be reused across train/eval/reporting.",
         ]
         manifests.append(
@@ -114,6 +116,12 @@ def build_training_manifests(
                     for key in sorted(phase_config)
                     if key not in {"algorithm", "reward_profile"}
                 },
+                runtime=_build_runtime_descriptor(
+                    phase_name=phase_name,
+                    backend=backend,
+                    algorithm=str(phase_config.get("algorithm", phase_name)),
+                    common_runtime=common_runtime,
+                ),
                 notes=notes,
             )
         )
@@ -138,6 +146,7 @@ def render_verl_manifest_yaml(manifest: TrainingManifest) -> str:
             "source": "veridoc_rl.verifiers",
         },
         "trainer": manifest.trainer,
+        "runtime": manifest.runtime,
         "output": {
             "output_dir": manifest.output_dir,
         },
@@ -163,6 +172,12 @@ def render_manifest_markdown(manifest: TrainingManifest) -> str:
             "",
             "## Trainer",
             *trainer_items,
+            "",
+            "## Runtime",
+            f"- `supported`: {manifest.runtime.get('supported', False)}",
+            f"- `entrypoint_module`: `{manifest.runtime.get('entrypoint_module')}`",
+            f"- `dataset_format`: `{manifest.runtime.get('dataset_format')}`",
+            f"- `reward_function`: `{manifest.runtime.get('reward_function')}`",
             "",
             "## Notes",
             *note_items,
@@ -222,6 +237,43 @@ def _resolve_runtime_config(matrix: ExperimentMatrix) -> dict[str, Any]:
         merged.update(runtime)
         return merged
     return dict(DEFAULT_RUNTIME)
+
+
+def _build_runtime_descriptor(
+    *,
+    phase_name: str,
+    backend: str,
+    algorithm: str,
+    common_runtime: dict[str, Any],
+) -> dict[str, Any]:
+    if backend != "verl":
+        return {
+            "supported": False,
+            "entrypoint_module": None,
+            "dataset_format": None,
+            "reward_function": None,
+            "reason": f"Unsupported runtime backend for this adapter: {backend}",
+        }
+    if phase_name == "phase_b_dpo":
+        return {
+            "supported": False,
+            "entrypoint_module": None,
+            "dataset_format": None,
+            "reward_function": None,
+            "reason": (
+                "The current runtime adapter only wires official verl PPO-style RL entrypoints. "
+                "Phase B DPO remains a corpus export stage until a separate DPO trainer backend is added."
+            ),
+        }
+    return {
+        "supported": True,
+        "entrypoint_module": "verl.trainer.main_ppo",
+        "dataset_format": "parquet",
+        "reward_function": "veridoc_rl.training.verl_reward.compute_score",
+        "adv_estimator": algorithm,
+        "launcher_defaults": dict(common_runtime),
+        "reason": "",
+    }
 
 
 def _render_yaml(value: Any, *, indent: int = 0) -> str:
