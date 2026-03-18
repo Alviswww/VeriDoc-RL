@@ -1,0 +1,99 @@
+﻿{
+  "input": {
+    "sample_id": "tpl_a_0001",
+    "form_type": "insurance_application_form",
+    "pdf_page": 1,
+    "ocr_tokens": [
+      {
+        "text": "投保人姓名",
+        "bbox": [10, 20, 60, 40],
+        "page": 1
+      }
+    ]
+  },
+  "reference": {
+    "sample_id": "tpl_a_0001",
+    "fields": {
+      "policyholder_name": "张三",
+      "policyholder_id_number": "440101199001011234",
+      "policyholder_phone": "13800138000",
+      "insured_name": "张三",
+      "insured_id_number": "440101199001011234",
+      "insured_birth_date": "1990-01-01",
+      "relation_policyholder_to_insured": "self",
+      "product_name": "whole_life",
+      "coverage_amount": "300000",
+      "payment_mode": "annual",
+      "payment_period_years": 20,
+      "application_date": "2024-01-15",
+      "checkboxes": {
+        "payment_mode.annual": true,
+        "payment_mode.monthly": false,
+        "payment_mode.auto_debit": false
+      }
+    },
+    "validations": [
+      {
+        "rule_id": "required.policyholder_name",
+        "status": "pass",
+        "message": "policyholder_name is present"
+      }
+    ]
+  },
+  "prediction": {
+    "sample_id": "tpl_a_0001",
+    "fields": {
+      "policyholder_name": "张三",
+      "policyholder_id_number": "440101199001011234",
+      "policyholder_phone": "13800138000",
+      "insured_name": "张三",
+      "insured_id_number": "440101199001011234",
+      "insured_birth_date": "1990-01-01",
+      "relation_policyholder_to_insured": "self",
+      "product_name": "whole_life",
+      "coverage_amount": "300000",
+      "payment_mode": "annual",
+      "payment_period_years": 20,
+      "application_date": "2024-01-15",
+      "checkboxes": {
+        "payment_mode.annual": true,
+        "payment_mode.monthly": false,
+        "payment_mode.auto_debit": false
+      }
+    },
+    "validations": [
+      {
+        "rule_id": "required.policyholder_name",
+        "status": "pass",
+        "message": "policyholder_name is present"
+      }
+    ]
+  },
+  "context": {
+    "allowed_relations": ["self", "spouse", "child", "parent"],
+    "allowed_payment_modes": ["annual", "monthly", "single_premium"],
+    "perturbed_predictions": [
+      {
+        "fields": {
+          "policyholder_name": "张三",
+          "policyholder_id_number": "440101199001011234",
+          "policyholder_phone": "13800138000",
+          "insured_name": "张三",
+          "insured_id_number": "440101199001011234",
+          "insured_birth_date": "1990-01-01",
+          "relation_policyholder_to_insured": "self",
+          "product_name": "whole_life",
+          "coverage_amount": "300000",
+          "payment_mode": "annual",
+          "payment_period_years": 20,
+          "application_date": "2024-01-15",
+          "checkboxes": {
+            "payment_mode.annual": true,
+            "payment_mode.monthly": false,
+            "payment_mode.auto_debit": false
+          }
+        }
+      }
+    ]
+  }
+}

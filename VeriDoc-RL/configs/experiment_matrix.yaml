@@ -1,0 +1,76 @@
+﻿project:
+  name: "VeriDoc-RL"
+  objective: "Verifier-guided RLVR for insurance application form extraction and rule validation"
+
+base_model:
+  mvp: "Qwen2.5-3B-Instruct"
+  full: "Qwen2.5-7B-Instruct"
+
+data:
+  task_scope:
+    - "insurance_application_form_extraction"
+    - "insurance_application_form_validation"
+  input_modalities:
+    - "pdf_page"
+    - "ocr_tokens"
+  buckets:
+    template_family:
+      - "template_a"
+      - "template_b"
+      - "template_c"
+    ocr_noise_level:
+      - "low"
+      - "medium"
+      - "high"
+    hard_case_type:
+      - "field_missing"
+      - "smudged_text"
+      - "occluded_region"
+      - "checkbox_conflict"
+    rule_complexity:
+      - "single_field"
+      - "cross_field"
+      - "conditional_checkbox"
+  error_taxonomy:
+    - "missing_field"
+    - "wrong_value"
+    - "normalization_error"
+    - "relation_error"
+    - "checkbox_logic_error"
+    - "rule_misfire"
+    - "ocr_fragility"
+    - "invalid_schema"
+
+training_stages:
+  - name: "sft_baseline"
+    method: "lora_sft"
+    goal: "produce valid fields-plus-validations output"
+  - name: "preference_optimization"
+    method: "dpo"
+    goal: "train on verifier-ranked candidate pairs"
+  - name: "rlvr"
+    method: "grpo_or_rloo"
+    goal: "optimize composite verifier reward"
+
+reward:
+  components:
+    schema_reward: 0.20
+    field_match_reward: 0.30
+    normalization_reward: 0.15
+    cross_field_consistency_reward: 0.20
+    checkbox_logic_reward: 0.10
+    ocr_robustness_reward: 0.05
+
+evaluation:
+  primary_metrics:
+    - "field_f1"
+    - "form_exact_match"
+    - "rule_pass_rate"
+    - "invalid_json_rate"
+    - "ocr_noise_bucket_performance"
+  ablations:
+    - "sft_only"
+    - "sft_plus_dpo"
+    - "sft_plus_rlvr"
+    - "sft_plus_rlvr_without_cross_field_consistency"
+    - "sft_plus_rlvr_without_checkbox_logic"

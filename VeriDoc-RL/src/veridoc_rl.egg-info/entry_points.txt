@@ -1,0 +1,2 @@
+[console_scripts]
+veridoc-rl-smoke = veridoc_rl.smoke:main

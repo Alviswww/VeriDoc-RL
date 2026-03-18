@@ -1,0 +1,13 @@
+﻿.idea/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+build/
+dist/
+.DS_Store
+Thumbs.db
