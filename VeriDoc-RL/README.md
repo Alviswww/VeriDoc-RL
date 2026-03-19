@@ -170,26 +170,30 @@ nvidia-smi
 
 ### 6.4 WSL 里的推荐环境准备
 
-建议在 WSL 里准备一个独立虚拟环境。你有两种常见做法。
+建议在 WSL 里直接准备两个 Python 3.12 虚拟环境：
+
+- `.venv-vllm`
+  - 只负责 baseline candidate generation 的 `vLLM` 服务
+- `.venv-rl`
+  - 负责仓库开发、测试、`prepare-only`、SFT、DPO、RL
+  - 当前默认 RL rollout backend 是 `sglang`
 
 做法 A：本机已经有 `python3.12`
 
 ```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
+python3.12 -m venv .venv-vllm
+python3.12 -m venv .venv-rl
 ```
 
 做法 B：用 `uv` 管理 Python 3.12
 
 ```bash
 uv python install 3.12
-uv venv --python 3.12 .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
+uv venv --python 3.12 .venv-vllm
+uv venv --python 3.12 .venv-rl
 ```
 
-之后再装仓库依赖。
+之后分别在两个环境里安装对应依赖。
 
 ## 7. 依赖分层
 
@@ -221,32 +225,36 @@ pip install -e .[dev,train]
 仓库的 `train` extra 还**不包含**下面这些运行时组件：
 
 - 与你本机 CUDA 匹配的 `torch`
-- `vllm`
-- `pyarrow`
-- `verl`
+- baseline 用的 `vllm`
+- RL 用的 `pyarrow`
+- RL 用的 `verl`
+- RL rollout 用的 `sglang`
 
-推荐顺序：
+推荐按双环境安装：
 
-1. 先安装 CUDA 匹配的 `torch`
-2. 再装仓库 `.[dev,train]`
-3. 再装 `vllm`
-4. 如果要跑 RL，再装 `pyarrow` 和 `verl`
+1. `.venv-vllm` 安装 `torch + vllm`
+2. `.venv-rl` 安装 `torch + .[dev,train] + pyarrow + verl + sglang`
 
 一个常见示意顺序如下：
 
 ```bash
-# 下面只是示意，torch wheel 源要改成和你机器匹配的 CUDA 版本
+# baseline candidate generation 服务
+source .venv-vllm/bin/activate
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+pip install vllm
+
+# 仓库主环境：prepare-only / SFT / DPO / RL
+source .venv-rl/bin/activate
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 pip install -e .[dev,train]
-pip install vllm pyarrow
-pip install verl
+pip install pyarrow verl sglang
 ```
 
 注意：
 
 - `torch` 的 CUDA wheel 源要按你的机器实际情况调整
-- 如果你只准备先做 baseline / SFT / DPO，本阶段不一定要先装 `verl`
-- 如果你只做 `prepare-only`，也不一定要立刻装全套训练依赖
+- `vLLM` 和 `verl` 在同一个环境里经常会因为上游依赖组合产生冲突，默认不要再把它们强行装到一个 `.venv`
+- 如果你只做 `prepare-only`，也建议直接在 `.venv-rl` 里完成
 
 ## 8. 你到底要不要先“导入” Qwen/Qwen3.5-0.8B
 
@@ -266,7 +274,7 @@ pip install verl
 
 ## 9. Qwen/Qwen3.5-0.8B 的实际启动方式
 
-当前项目里有两种“启动模型”的方式，它们服务不同用途。
+当前项目里有三种和模型有关的运行方式，它们服务不同用途。
 
 ### 9.1 方式一：给 candidate generation 用的 vLLM 服务
 
@@ -317,6 +325,12 @@ curl http://127.0.0.1:8000/v1/models
 
 - `vLLM` 只负责 baseline 候选生成
 - SFT / DPO / checkpoint 推理都不是通过 `vLLM serve` 完成的
+
+### 9.3 方式三：给 RL rollout 用的 `verl + sglang`
+
+- `phase_c_grpo / phase_c_rloo` 仍然由 `verl.trainer.main_ppo` 驱动
+- 当前仓库默认 rollout backend 已调整为 `sglang`
+- 这部分运行在 `.venv-rl`，不依赖你手工启动的 `vLLM serve`
 
 ## 10. 数据契约
 
@@ -759,28 +773,34 @@ outputs/pipelines/qwen35_0p8b_mainline/
 ```bash
 cd /home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL
 
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
+python3.12 -m venv .venv-vllm
+python3.12 -m venv .venv-rl
 
-# 安装和你机器匹配的 torch
+# baseline candidate generation 服务环境
+source .venv-vllm/bin/activate
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+pip install vllm
 
-# 安装仓库依赖
+# 仓库主环境
+source .venv-rl/bin/activate
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 pip install -e .[dev,train]
-
-# baseline candidate / RL 相关
-pip install vllm pyarrow
-pip install verl
+pip install pyarrow verl sglang
 ```
 
 ### 13.2 第二步：确认 GPU 与依赖
 
 ```bash
 nvidia-smi
+
+source .venv-vllm/bin/activate
+python -c "import torch; print(torch.cuda.is_available())"
+python -c "import vllm; print('vllm-ok')"
+
+source .venv-rl/bin/activate
 python -c "import torch; print(torch.cuda.is_available())"
 python -c "import transformers, datasets, peft, trl; print('train-ok')"
-python -c "import vllm; print('vllm-ok')"
+python -c "import pyarrow, verl, sglang; print('rl-ok')"
 ```
 
 只有这些都通了，再继续。
@@ -806,6 +826,8 @@ python scripts/generate_sft_dataset.py \
 ### 13.4 第四步：启动 vLLM
 
 ```bash
+source .venv-vllm/bin/activate
+
 vllm serve Qwen/Qwen3.5-0.8B \
   --host 127.0.0.1 \
   --port 8000 \
@@ -890,7 +912,8 @@ cat outputs/pipelines/qwen35_0p8b_mainline/summary.json
 ### Q1. 推理框架是不是 vLLM
 
 baseline candidate generation：是。  
-训练后 checkpoint 回评：不是，走本地 `transformers`。
+训练后 checkpoint 回评：不是，走本地 `transformers`。  
+RL rollout：也不是默认外部 `vLLM serve`，当前走 `verl + sglang`。
 
 ### Q2. SFT 是不是用 vLLM 训练
 
@@ -931,7 +954,7 @@ baseline candidate generation：是。
 
 如果你只是想开始跑项目，优先顺序建议是：
 
-1. 先把 WSL 里的 Python 3.12 + CUDA + `torch` + `vllm` 打通
+1. 先把 WSL 里的 Python 3.12 + CUDA + `.venv-vllm` / `.venv-rl` 两套环境打通
 2. 再跑 `pytest`
 3. 再跑 `prepare-only pipeline`
 4. 最后再跑完整 pipeline

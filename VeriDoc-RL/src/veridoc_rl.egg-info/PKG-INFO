@@ -10,6 +10,7 @@ Requires-Dist: pytest<9,>=7.4; extra == "dev"
 Requires-Dist: ruff<1,>=0.5; extra == "dev"
 Provides-Extra: train
 Requires-Dist: accelerate<2,>=1; extra == "train"
+Requires-Dist: bitsandbytes<1,>=0.43; extra == "train"
 Requires-Dist: datasets<4,>=2.20; extra == "train"
 Requires-Dist: peft<1,>=0.11; extra == "train"
 Requires-Dist: transformers<5,>=4.46; extra == "train"
@@ -17,104 +18,327 @@ Requires-Dist: trl<1,>=0.11; extra == "train"
 
 # VeriDoc-RL
 
-VeriDoc-RL 是一个面向制式投保单的 verifier-guided post-training 项目。它把 `OCR token 序列 -> 结构化字段抽取 -> 规则校验 -> verifier reward` 串成统一闭环，用同一套 schema、规则、verifier 和 reward 支持 `SFT / DPO / RLVR` 三条路线。
+VeriDoc-RL 是一个面向制式投保单的 verifier-guided post-training 项目。它把 `OCR token 序列 -> 结构化字段抽取 -> 规则校验 -> verifier reward` 串成统一闭环，用同一套 schema、规则、verifier 和 reward 支持 `baseline / SFT / DPO / RLVR` 四类结果对比。
 
-这份 README 是仓库的主接手文档。后续开新线程时，优先读本文件即可建立对仓库的整体认知，通常不需要再把 `docs/`、`scripts/`、`src/` 整体重新扫一遍。
+这份 README 是仓库的主接手文档。当前内容已经同步到仓库里真实存在的本地单机链路，包括：
 
-## 1. 仓库定位
+- `Qwen/Qwen3.5-0.8B` 默认基座
+- `vLLM` candidate generation
+- `phase_a_sft` 本地 SFT runtime
+- `phase_b_dpo` 本地 DPO runtime
+- `phase_c_grpo / phase_c_rloo` 的 `verl` runtime bridge
+- `run_pipeline.py` 本地训练编排层 v1
 
-一句话：
+## 1. 当前主线
 
-`输入投保单 OCR/版面结果，输出 fields + validations，并比较 SFT / DPO / RLVR 在字段准确率、规则通过率和 OCR 噪声鲁棒性上的差异。`
+当前默认实验主线固定为：
 
-项目强调的不是“再做一个表单抽取任务”，而是：
+1. `Qwen/Qwen3.5-0.8B` 作为 baseline
+2. 在 baseline 上做 `phase_a_sft`
+3. 在 `phase_a_sft` checkpoint 上做 `phase_b_dpo`
+4. 在 `phase_a_sft` checkpoint 上做 `phase_c_grpo` 或 `phase_c_rloo`
+5. 对比 `baseline / sft / dpo / rlvr` 四类结果
 
-- 把制式文档抽取建模为 `结构化生成 + 规则校验` 的联合输出问题。
-- 把业务约束改写成可程序化 verifier。
-- 用同一套 verifier 同时服务于：
-  - Phase A 评测
-  - DPO preference 构造
-  - RLVR composite reward
-- 用 bucket 分析、error taxonomy 和 case export 做闭环验证。
+这里有两个刻意固定的约束：
 
-## 2. 当前实现状态
+- `DPO` 默认接 `SFT checkpoint`
+- `RLVR` 默认也接 `SFT checkpoint`
 
-### 已完成
+这样做的原因很简单：
 
-- 统一输入输出 schema
-- synthetic 投保单样本生成
-- 基于规则目录的 reference validations 构造
-- 六类 verifier
+- 小模型在没有 SFT 预热时，结构化 JSON 输出通常不够稳定
+- 如果把 RL 默认串到 DPO 后面，会把“偏好优化收益”和“verifier reward 收益”混在一起
+
+## 2. 框架边界
+
+这是当前项目最容易混淆的一点，先直接说清楚：
+
+| 环节 | 当前框架 | 说明 |
+| --- | --- | --- |
+| baseline candidate 生成 | `vLLM` | 通过 OpenAI-compatible API 提供多候选采样 |
+| 训练后 checkpoint 回评推理 | `transformers` + `peft` | `scripts/run_inference.py` 直接加载本地模型或 checkpoint |
+| `phase_a_sft` | `transformers.Trainer` + `datasets` + `peft` | 入口是 `src/veridoc_rl/training/trl_sft.py`，文件名历史上叫 `trl_sft.py`，但实际不是 `TRL SFTTrainer` |
+| `phase_b_dpo` | `TRL DPOTrainer` + `transformers` + `datasets` + `peft` | 入口是 `src/veridoc_rl/training/trl_dpo.py` |
+| `phase_c_grpo / phase_c_rloo` | `verl.trainer.main_ppo` | 通过 `src/veridoc_rl/training/verl_reward.py` 接 verifier reward |
+
+结论：
+
+- 推理框架默认是 `vLLM`
+- SFT 训练框架不是 `vLLM`
+- 当前 SFT 训练框架是仓库内的 `transformers.Trainer + datasets + peft` 运行器
+- DPO 训练框架是 `TRL`
+- RL 训练框架是 `verl`
+- 当前不使用独立 reward model，RL 仍默认使用 verifier-based reward
+
+## 3. 当前实现状态
+
+### 已经接通
+
+- 统一 schema
+- synthetic 样本生成
+- verifier suite
 - reward profile / ablation
 - Phase A 单报告评测
-- 多报告对比、Markdown 摘要与 SVG 图表导出
-- experiment matrix 解析与实验计划展开
-- Phase A / B / C 训练语料准备脚手架
-- Phase B / C 训练 manifest 生成
-- Phase B TRL-backed DPO runtime launch plan
-- Phase C `verl` runtime launch plan 与 verifier reward bridge
+- 多报告对比
+- experiment matrix
+- `vLLM` candidate generation
+- Phase A / B / C 训练语料准备
+- Phase A / B / C manifest 生成
+- Phase A / B / C runtime bundle 生成
+- 本地 checkpoint inference
+- 本地 orchestration pipeline
 
-### 当前仍然是脚手架的部分
+### 仍然没有做的部分
 
-- 还没有接入真正的分布式训练编排、checkpoint 恢复和训练日志归档
-- 当前 Phase B DPO runtime 会生成可执行 launch plan，并通过仓库内 `TRL` runner 消费本地 JSONL；真正执行仍依赖你本地已安装训练依赖与可用 GPU 环境
-- 当前 `verl` runtime adapter 已能为 `phase_c_grpo / phase_c_rloo` 生成真实 launch plan，但仍依赖你本地已安装 `verl` 与可用 GPU 环境
-- 还没有 candidate 采样器、online rollout executor、checkpoint 管理和训练日志聚合
-- 当前没有独立的 reward model 训练 pipeline；RL 仍默认使用 verifier-based reward，而不是可训练 RM
+- 分布式训练调度
+- 多机日志聚合
+- 独立 reward model 训练与 serving
+- 自动 best-checkpoint 选择
+- 更完整的远程执行器
 
-也就是说：仓库已经具备数据、verifier、reward、评测、训练语料准备、训练配置生成，以及 Phase B / C 的运行时桥接；真正还缺的是更完整的训练编排层与独立 reward model 链路，而不是底层 reward/评测骨架。
+也就是说，仓库现在已经能在单机上把数据准备、训练入口、checkpoint 衔接、回评和对比串起来；真正没做的是更重型的训练平台能力。
 
-## 3. 目录与根路径说明
+## 4. 为什么默认切到 Qwen3.5-0.8B
 
-有一个容易踩坑的点：
+当前默认组合是：
 
-- git 根目录是外层：`/home/alvis/projects/llm-study/VeriDoc-RL`
-- Python 项目根目录是内层：`/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL`
+- 模型：`Qwen/Qwen3.5-0.8B`
+- 推理：`vLLM`
+- SFT / DPO 适配：`QLoRA`
 
-下面 README 里的所有命令，默认都在内层项目根目录执行：
+这样选的原因：
+
+- `0.8B` 更适合本地单卡做 smoke 和小规模实验
+- `vLLM` 能把 baseline candidate 生成稳定统一到 API 层
+- `QLoRA` 能把 `SFT / DPO` 的显存门槛压低
+- 同一套模型既能做 baseline，也能继续做 SFT / DPO / RL 对比
+
+## 5. 路径说明
+
+仓库有两层根目录：
+
+- git 根目录：`/home/alvis/projects/llm-study/VeriDoc-RL`
+- Python 项目根目录：`/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL`
+
+下面 README 里的所有命令都默认在内层项目根目录执行：
 
 ```bash
 cd /home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL
 ```
 
-## 4. 总体架构
+## 6. Windows + WSL 的推荐运行方式
 
-从数据到训练的主数据流如下：
+如果你准备用 Windows 机器启动这个项目，当前最稳妥的方式不是在 PowerShell 里直接跑，而是：
 
-1. `src/veridoc_rl/data/synthetic.py`
-   - 生成 synthetic `input/reference/metadata`
-   - 输出 `SFT_gold`、`SFT_silver`、`RL_prompt_only`
-2. `src/veridoc_rl/verifiers/`
-   - 对预测结果做 schema、字段、标准化、跨字段、checkbox、OCR robustness 验证
-3. `src/veridoc_rl/rewards/`
-   - 把 verifier score 组合成 composite reward
-4. `src/veridoc_rl/data/preferences.py`
-   - 用 verifier score 给多候选 prediction 排序
-   - 构造 `DPO_preference`
-5. `src/veridoc_rl/evaluation/reporting.py`
-   - 做单次 Phase A 评测
-   - 输出 overall、bucket、taxonomy、failure cases
-6. `src/veridoc_rl/evaluation/comparison.py`
-   - 对多份评测报告做横向对比
-   - 产出 Markdown 和 SVG 图表
-7. `src/veridoc_rl/training/corpus.py`
-   - 把原始 JSONL 转成训练语料
-   - 支持 Phase A SFT、Phase B DPO、Phase C RLVR
-8. `src/veridoc_rl/training/manifests.py`
-   - 从 experiment matrix 和训练语料路径生成训练 manifest bundle
-9. `src/veridoc_rl/training/runtime.py`
-   - 从 `manifest.json` 生成 `runtime_plan.json` 和 `launch.sh`
-   - 把 `phase_b_dpo` 桥接到仓库内 `TRL` DPO runner
-   - 把 `phase_c_grpo / phase_c_rloo` 桥接到 `verl.trainer.main_ppo`
-10. `src/veridoc_rl/training/trl_dpo.py`
-   - 提供 TRL-backed DPO runner
-   - 负责本地 JSONL -> TRL dataset rows 的转换与训练执行
-11. `src/veridoc_rl/training/verl_reward.py`
-   - 提供 `verl` 可调用的 verifier-based `compute_score`
+1. Windows 装好 NVIDIA 驱动
+2. 在 Windows 上启用 WSL2
+3. 在 WSL 里完成 Python 环境、依赖安装、训练与推理
+4. 把 GPU 通过 WSL 的 CUDA bridge 暴露给 Linux 用户态
 
-## 5. 数据契约
+### 6.1 建议直接在 WSL 内运行
 
-### 5.1 输入 schema
+当前仓库的脚本、路径和 `launch.sh` 都是按 Linux 运行方式写的，所以建议：
+
+- 不要在 PowerShell 里直接跑仓库脚本
+- 统一进入 WSL shell 后执行
+- 所有模型下载、训练和推理都放在 WSL 环境里
+
+### 6.2 Python 版本建议
+
+当前仓库 `pyproject.toml` 要求：
+
+```text
+requires-python = ">=3.12"
+```
+
+同时，当前你的这台 WSL 会话默认 `python3` 是 `3.14.3`，而系统 Python 里可见的是 `3.10.12`。这两个都不适合作为本项目的最终运行环境：
+
+- `3.10` 低于仓库当前要求
+- `3.14` 对很多训练栈和 `vLLM` 兼容性不稳
+
+推荐直接在 WSL 里新建一个 **Python 3.12** 环境。
+
+最推荐的目标版本：
+
+- `Python 3.12`
+
+### 6.3 WSL 环境的最小检查
+
+在开始之前，先在 WSL 里检查：
+
+```bash
+uname -a
+nvidia-smi
+python3 --version
+```
+
+你当前这台会话里，`nvidia-smi` 返回的是：
+
+```text
+Failed to initialize NVML: GPU access blocked by the operating system
+```
+
+这说明当前会话无法直接证明 GPU 已经被 WSL 正常拿到，所以你在正式开跑前，应该先让下面这条命令在 WSL 里正常返回显卡信息：
+
+```bash
+nvidia-smi
+```
+
+如果这一步不通，不要继续安装 `torch / vllm / bitsandbytes / verl`。
+
+### 6.4 WSL 里的推荐环境准备
+
+建议在 WSL 里准备一个独立虚拟环境。你有两种常见做法。
+
+做法 A：本机已经有 `python3.12`
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+```
+
+做法 B：用 `uv` 管理 Python 3.12
+
+```bash
+uv python install 3.12
+uv venv --python 3.12 .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+```
+
+之后再装仓库依赖。
+
+## 7. 依赖分层
+
+### 7.1 仓库基础依赖
+
+只做开发、测试和评测：
+
+```bash
+pip install -e .[dev]
+```
+
+如果要执行 SFT / DPO：
+
+```bash
+pip install -e .[dev,train]
+```
+
+当前 `train` extra 会带来：
+
+- `accelerate`
+- `bitsandbytes`
+- `datasets`
+- `peft`
+- `transformers`
+- `trl`
+
+### 7.2 还需要你自己补的依赖
+
+仓库的 `train` extra 还**不包含**下面这些运行时组件：
+
+- 与你本机 CUDA 匹配的 `torch`
+- `vllm`
+- `pyarrow`
+- `verl`
+
+推荐顺序：
+
+1. 先安装 CUDA 匹配的 `torch`
+2. 再装仓库 `.[dev,train]`
+3. 再装 `vllm`
+4. 如果要跑 RL，再装 `pyarrow` 和 `verl`
+
+一个常见示意顺序如下：
+
+```bash
+# 下面只是示意，torch wheel 源要改成和你机器匹配的 CUDA 版本
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+pip install -e .[dev,train]
+pip install vllm pyarrow
+pip install verl
+```
+
+注意：
+
+- `torch` 的 CUDA wheel 源要按你的机器实际情况调整
+- 如果你只准备先做 baseline / SFT / DPO，本阶段不一定要先装 `verl`
+- 如果你只做 `prepare-only`，也不一定要立刻装全套训练依赖
+
+## 8. 你到底要不要先“导入” Qwen/Qwen3.5-0.8B
+
+不需要手工“导入”。
+
+当前仓库的默认方式是：
+
+- 直接在配置或命令里写 `Qwen/Qwen3.5-0.8B`
+- 第一次真正运行 `vLLM` 或 `transformers.from_pretrained(...)` 时再自动下载
+
+也就是说：
+
+- 开发文档、dry-run、prepare-only 不需要先下载模型
+- 真正执行 baseline / SFT / DPO / RL 时，训练机需要能访问这个模型
+
+如果你希望提前缓存到本地路径，也可以先下载到本地目录，再在配置中把模型名替换成目录路径。
+
+## 9. Qwen/Qwen3.5-0.8B 的实际启动方式
+
+当前项目里有两种“启动模型”的方式，它们服务不同用途。
+
+### 9.1 方式一：给 candidate generation 用的 vLLM 服务
+
+这条线用于：
+
+- baseline 多候选采样
+- preference 数据构造前的 candidate 生成
+
+最小启动命令：
+
+```bash
+vllm serve Qwen/Qwen3.5-0.8B \
+  --host 127.0.0.1 \
+  --port 8000 \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.85
+```
+
+然后本仓库的 candidate 脚本默认连：
+
+```text
+http://127.0.0.1:8000/v1
+```
+
+可先用下面命令快速检查服务：
+
+```bash
+curl http://127.0.0.1:8000/v1/models
+```
+
+如果这一步能返回模型列表，你的 baseline candidate 服务就起来了。
+
+### 9.2 方式二：给 SFT / DPO / checkpoint 回评用的本地 transformers 加载
+
+这条线用于：
+
+- `phase_a_sft`
+- `phase_b_dpo`
+- 训练后 checkpoint 推理回评
+
+它不会起一个 API 服务，而是直接在 Python 进程里加载：
+
+- `AutoTokenizer.from_pretrained(...)`
+- `AutoModelForCausalLM.from_pretrained(...)`
+- 如果是 PEFT adapter checkpoint，则走 `AutoPeftModelForCausalLM.from_pretrained(...)`
+
+也就是说：
+
+- `vLLM` 只负责 baseline 候选生成
+- SFT / DPO / checkpoint 推理都不是通过 `vLLM serve` 完成的
+
+## 10. 数据契约
+
+### 10.1 输入样本
 
 每条输入样本的核心结构：
 
@@ -133,7 +357,7 @@ cd /home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL
 }
 ```
 
-### 5.2 输出 schema
+### 10.2 输出样本
 
 模型必须输出：
 
@@ -153,7 +377,7 @@ cd /home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL
 }
 ```
 
-### 5.3 训练前数据类型
+### 10.3 上游数据类型
 
 仓库当前支持四类上游 JSONL：
 
@@ -162,9 +386,9 @@ cd /home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL
 - `RL_prompt_only`
 - `DPO_preference`
 
-### 5.4 训练语料类型
+### 10.4 下游训练语料
 
-`src/veridoc_rl/training/corpus.py` 会把它们转成三类下游训练语料：
+`src/veridoc_rl/training/corpus.py` 会把上游数据转成三类训练语料：
 
 - `phase_a_sft`
   - `messages = [system, user, assistant]`
@@ -173,351 +397,111 @@ cd /home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL
 - `phase_c_rlvr`
   - `system_prompt + prompt + reward_profile + metadata`
 
-## 6. 字段、规则、bucket 与 reward
+### 10.5 candidate.jsonl 契约
 
-### 6.1 字段范围
+`scripts/generate_candidates.py` 导出的记录核心长这样：
 
-第一版字段覆盖以下方向：
-
-- 投保人/被保人基本信息
-- 证件号、手机号、地址
-- 险种、保额、缴费方式、缴费年限
-- 受益人信息与比例
-- 勾选项
-- 签字/日期类字段
-
-实际 synthetic generator 当前稳定覆盖的代表字段包括：
-
-- `policyholder_name`
-- `policyholder_gender`
-- `policyholder_id_number`
-- `policyholder_phone`
-- `policyholder_address`
-- `insured_name`
-- `insured_gender`
-- `insured_id_number`
-- `insured_birth_date`
-- `relation_policyholder_to_insured`
-- `product_name`
-- `coverage_amount`
-- `currency`
-- `payment_mode`
-- `payment_period_years`
-- `beneficiary_name`
-- `beneficiary_ratio`
-- `signature_present`
-- `application_date`
-- `checkboxes`
-- `auto_debit_account`
-
-### 6.2 规则目录
-
-规则定义集中在 `src/veridoc_rl/rules.py`，文档版目录在 `docs/rules_catalog.md`。
-
-当前规则包括三大类：
-
-- required
-  - `required.policyholder_name`
-  - `required.policyholder_id_number`
-  - `required.insured_name`
-- format
-  - `format.policyholder_phone`
-  - `format.policyholder_id_number`
-  - `format.application_date`
-- consistency / checkbox
-  - `consistency.birth_date_vs_id_number`
-  - `consistency.beneficiary_ratio_sum`
-  - `consistency.policyholder_insured_relation`
-  - `consistency.product_payment_combo`
-  - `checkbox.payment_mode_exclusive`
-  - `checkbox.auto_debit_requires_account`
-
-### 6.3 Bucket 维度
-
-仓库统一按四个维度做分桶：
-
-- `template_family`
-- `ocr_noise_level`
-- `hard_case_type`
-- `rule_complexity`
-
-### 6.4 Reward 组件
-
-当前 reward 组件：
-
-- `schema_reward`
-- `field_match_reward`
-- `normalization_reward`
-- `cross_field_consistency_reward`
-- `checkbox_logic_reward`
-- `ocr_robustness_reward`
-
-支持的 reward profile：
-
-- `default`
-- `rlvr`
-- `rlvr_without_cross_field_consistency`
-- `rlvr_without_checkbox_logic`
-
-## 7. 代码模块索引
-
-### 7.1 `src/veridoc_rl/schema.py`
-
-统一 dataclass schema：
-
-- `OCRToken`
-- `FormInput`
-- `ValidationResult`
-- `FormOutput`
-- `validate_prediction_payload`
-
-### 7.2 `src/veridoc_rl/normalizers.py`
-
-字段标准化工具：
-
-- `normalize_phone`
-- `normalize_id_number`
-- `normalize_date`
-- `normalize_amount`
-- `normalize_checkbox_value`
-- `normalize_known_field`
-
-### 7.3 `src/veridoc_rl/data/synthetic.py`
-
-synthetic 数据生成器：
-
-- `SyntheticFormGenerator`
-- `build_validations`
-- `apply_ocr_noise`
-- `build_training_record`
-- CLI: `generate_sft_dataset.py`
-
-### 7.4 `src/veridoc_rl/verifiers/`
-
-当前默认 verifier suite 顺序：
-
-1. `SchemaVerifier`
-2. `FieldMatchVerifier`
-3. `NormalizationVerifier`
-4. `CrossFieldConsistencyVerifier`
-5. `CheckboxLogicVerifier`
-6. `OCRRobustnessVerifier`
-
-### 7.5 `src/veridoc_rl/rewards/`
-
-负责：
-
-- reward 权重定义
-- ablation profile
-- verifier result -> total reward 聚合
-
-### 7.6 `src/veridoc_rl/evaluation/`
-
-分两层：
-
-- `metrics.py`
-  - 单样本字段/表单/规则指标
-- `reporting.py`
-  - 单报告汇总、bucket、taxonomy、failure cases
-- `comparison.py`
-  - 多报告对比、Markdown、SVG
-
-### 7.7 `src/veridoc_rl/experiments/`
-
-负责消费 `configs/experiment_matrix.yaml`：
-
-- 解析 experiment matrix
-- 展开实验队列
-- 输出 JSON / Markdown 实验计划
-
-### 7.8 `src/veridoc_rl/training/`
-
-这是本轮新补的训练侧脚手架：
-
-- `prompting.py`
-  - 统一 system prompt
-  - OCR token -> user prompt
-  - reference output -> assistant response
-- `corpus.py`
-  - 原始 JSONL -> 训练语料 JSONL
-- `manifests.py`
-  - 根据 experiment matrix 生成 `phase_b_dpo` / `phase_c_grpo` / `phase_c_rloo`
-  - 输出 `manifest.json`、`README.md`、`verl.yaml`
-- `runtime.py`
-  - 读取 manifest
-  - 生成 launch plan
-  - 为 RL phase 生成 `launch.sh` 和 `runtime_plan.json`
-- `verl_reward.py`
-  - 提供 `custom_reward_function.path` 指向的 reward bridge
-
-## 8. `experiment_matrix.yaml` 说明
-
-位置：
-
-```text
-configs/experiment_matrix.yaml
+```json
+{
+  "candidate_id": "template_a_00000::cand_0",
+  "sample_id": "template_a_00000",
+  "backend": "vllm",
+  "model": "Qwen/Qwen3.5-0.8B",
+  "generation_config": {
+    "temperature": 0.8,
+    "top_p": 0.95,
+    "max_new_tokens": 1024,
+    "num_candidates": 4
+  },
+  "prediction": {
+    "sample_id": "template_a_00000",
+    "fields": {},
+    "validations": []
+  },
+  "raw_text": "{...}"
+}
 ```
 
-当前它描述五类内容：
+其中 `generate_preference_dataset.py` 真正依赖的核心字段只有：
 
-- project 目标
-- base model 分层
-- 数据 bucket 与 error taxonomy
-- training stage 定义
-- training runtime 默认项
-- reward component
-- evaluation 关心的 primary metrics 与 ablations
+- `candidate_id`
+- `prediction.sample_id`
+- `prediction.fields`
+- `prediction.validations`
 
-训练 runtime 现在也在这里维护，包含：
+## 11. 常用命令
 
-- `backend`
-- `prompt_template`
-- `phases.phase_b_dpo`
-- `phases.phase_c_grpo`
-- `phases.phase_c_rloo`
-
-这使得后续接入真实 trainer 时，可以继续沿用同一份 matrix 作为“实验真相来源”。
-
-## 9. 环境与安装
-
-安装开发环境：
-
-```bash
-pip install -e .[dev]
-```
-
-开发依赖当前只有：
-
-- `pytest`
-- `ruff`
-- `mypy`
-
-如果要实际执行 Phase B DPO 训练，再安装训练依赖：
-
-```bash
-pip install -e .[train]
-```
-
-其中会引入：
-
-- `trl`
-- `transformers`
-- `datasets`
-- `accelerate`
-- `peft`
-
-## 10. 常用命令总表
-
-### 10.1 运行测试
+### 11.1 跑测试
 
 ```bash
 pytest
 ```
 
-### 10.2 最小 smoke
+### 11.2 跑最小 smoke
 
 ```bash
 veridoc-rl-smoke
 ```
 
-也可以传 fixture 或 prediction：
+### 11.3 生成 synthetic 数据
 
-```bash
-veridoc-rl-smoke --fixture-path path/to/fixture.json
-veridoc-rl-smoke --prediction-json '{"sample_id":"s1","fields":{},"validations":[]}'
-```
-
-### 10.3 生成 synthetic 数据
-
-生成 SFT 数据：
+生成 `SFT_gold`：
 
 ```bash
 python scripts/generate_sft_dataset.py \
-  --count 8 \
+  --count 200 \
   --seed 7 \
   --task-type SFT_gold \
   --output-path outputs/sft_gold.jsonl
 ```
 
-生成 RL prompt-only 数据：
+生成 `RL_prompt_only`：
 
 ```bash
 python scripts/generate_sft_dataset.py \
-  --count 8 \
-  --seed 7 \
+  --count 200 \
+  --seed 11 \
   --task-type RL_prompt_only \
   --output-path outputs/rl_prompt_only.jsonl
 ```
 
-### 10.4 生成 preference 数据
+### 11.4 启动 vLLM
+
+```bash
+vllm serve Qwen/Qwen3.5-0.8B \
+  --host 127.0.0.1 \
+  --port 8000 \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.85
+```
+
+### 11.5 生成 baseline candidates
+
+```bash
+python scripts/generate_candidates.py \
+  --input-path outputs/sft_gold.jsonl \
+  --output-path outputs/candidates.jsonl \
+  --model Qwen/Qwen3.5-0.8B \
+  --api-base http://127.0.0.1:8000/v1 \
+  --num-candidates 4 \
+  --temperature 0.8 \
+  --top-p 0.95 \
+  --max-new-tokens 1024
+```
+
+### 11.6 构造 DPO preference
 
 ```bash
 python scripts/generate_preference_dataset.py \
-  --reference-path outputs/reference.jsonl \
+  --reference-path outputs/sft_gold.jsonl \
   --candidate-path outputs/candidates.jsonl \
   --output-path outputs/preferences.jsonl \
   --min-margin 0.05
 ```
 
-### 10.5 运行单报告评测
+### 11.7 导出训练语料
 
-```bash
-python scripts/run_phase_a_eval.py \
-  --reference-path outputs/reference.jsonl \
-  --prediction-path outputs/prediction.jsonl \
-  --report-path outputs/phase_a_report.json \
-  --case-export-path outputs/phase_a_cases.jsonl \
-  --failure-only
-```
-
-### 10.6 做 reward ablation
-
-```bash
-python scripts/run_phase_a_eval.py \
-  --reference-path outputs/reference.jsonl \
-  --prediction-path outputs/prediction.jsonl \
-  --report-path outputs/phase_a_report.ablation.json \
-  --reward-profile rlvr_without_checkbox_logic
-```
-
-### 10.7 生成实验计划
-
-```bash
-python scripts/generate_experiment_plan.py \
-  --matrix-path configs/experiment_matrix.yaml \
-  --output-path outputs/experiment_plan.json \
-  --markdown-path outputs/experiment_plan.md
-```
-
-也可以直接用 console script：
-
-```bash
-veridoc-rl-generate-plan \
-  --matrix-path configs/experiment_matrix.yaml \
-  --output-path outputs/experiment_plan.json \
-  --markdown-path outputs/experiment_plan.md
-```
-
-### 10.8 对比多份评测报告
-
-```bash
-python scripts/compare_phase_reports.py \
-  --report sft=outputs/sft_report.json \
-  --report dpo=outputs/dpo_report.json \
-  --report rlvr=outputs/rlvr_report.json \
-  --output-dir outputs/report_compare
-```
-
-输出目录会生成：
-
-- `comparison.json`
-- `comparison.md`
-- `rule_pass_rate_comparison.svg`
-- `ocr_noise_level_field_f1.svg`
-
-### 10.9 准备训练语料
-
-Phase A SFT 语料：
+Phase A：
 
 ```bash
 python scripts/prepare_training_data.py \
@@ -526,7 +510,7 @@ python scripts/prepare_training_data.py \
   --stage phase_a_sft
 ```
 
-Phase B DPO 语料：
+Phase B：
 
 ```bash
 python scripts/prepare_training_data.py \
@@ -535,7 +519,7 @@ python scripts/prepare_training_data.py \
   --stage phase_b_dpo
 ```
 
-Phase C RLVR 语料：
+Phase C：
 
 ```bash
 python scripts/prepare_training_data.py \
@@ -545,55 +529,31 @@ python scripts/prepare_training_data.py \
   --reward-profile rlvr
 ```
 
-console script 版本：
-
-```bash
-veridoc-rl-prepare-training \
-  --input-path outputs/rl_prompt_only.jsonl \
-  --output-path outputs/train.phase_c_rlvr.jsonl \
-  --stage phase_c_rlvr \
-  --reward-profile rlvr
-```
-
-### 10.10 生成 Phase B / Phase C 训练 manifest
+### 11.8 生成 manifest bundle
 
 ```bash
 python scripts/generate_training_manifests.py \
   --matrix-path configs/experiment_matrix.yaml \
-  --train-data-path outputs/train.phase_b_dpo.jsonl \
-  --output-dir outputs/training_bundle
+  --phase-a-train-data-path outputs/train.phase_a_sft.jsonl \
+  --phase-b-train-data-path outputs/train.phase_b_dpo.jsonl \
+  --phase-c-train-data-path outputs/train.phase_c_rlvr.jsonl \
+  --output-dir outputs/training_bundle \
+  --phase-a-base-model Qwen/Qwen3.5-0.8B \
+  --phase-b-base-model outputs/runtime_runs/phase_a_sft/checkpoints \
+  --phase-c-base-model outputs/runtime_runs/phase_a_sft/checkpoints
 ```
 
-如果要给 RL 阶段生成 bundle，也直接复用：
+### 11.9 生成 runtime bundle
+
+SFT：
 
 ```bash
-python scripts/generate_training_manifests.py \
-  --matrix-path configs/experiment_matrix.yaml \
-  --train-data-path outputs/train.phase_c_rlvr.jsonl \
-  --output-dir outputs/training_bundle_rl
+python scripts/prepare_training_runtime.py \
+  --manifest-path outputs/training_bundle/phase_a_sft/manifest.json \
+  --run-dir outputs/runtime_runs/phase_a_sft
 ```
 
-生成结果默认包含：
-
-- `phase_b_dpo/manifest.json`
-- `phase_b_dpo/README.md`
-- `phase_b_dpo/verl.yaml`
-- `phase_c_grpo/manifest.json`
-- `phase_c_grpo/README.md`
-- `phase_c_grpo/verl.yaml`
-- `phase_c_rloo/manifest.json`
-- `phase_c_rloo/README.md`
-- `phase_c_rloo/verl.yaml`
-
-注意：
-
-- 这一步会生成 manifest bundle，但不会自动启动训练。
-- `phase_b_dpo` 现在可以继续走下一步 `prepare_training_runtime.py`，生成 TRL-backed DPO launch plan。
-- `phase_c_grpo / phase_c_rloo` 也继续走下一步 `prepare_training_runtime.py`，生成 `verl` launch plan。
-
-### 10.11 为 Phase B / Phase C 准备 runtime
-
-给 `phase_b_dpo` 生成 launch plan：
+DPO：
 
 ```bash
 python scripts/prepare_training_runtime.py \
@@ -601,160 +561,395 @@ python scripts/prepare_training_runtime.py \
   --run-dir outputs/runtime_runs/phase_b_dpo
 ```
 
-DPO 生成结果包含：
-
-- `runtime_plan.json`
-- `launch.sh`
-- `dpo_config.json`
-- `data/phase_b_dpo.train.jsonl`
-
-DPO 运行逻辑：
-
-- `phase_b_dpo` 会桥接到 `python -m veridoc_rl.training.trl_dpo --config-path ...`
-- runtime 会把仓库内 `phase_b_dpo` 训练语料转成 TRL 可直接消费的 `prompt/chosen/rejected` JSONL
-- 真正执行训练前需要先安装 `.[train]`
-
-给 `phase_c_grpo` 生成 launch plan：
+RL：
 
 ```bash
 python scripts/prepare_training_runtime.py \
-  --manifest-path outputs/training_bundle_rl/phase_c_grpo/manifest.json \
-  --run-dir outputs/runtime_runs/phase_c_grpo
-```
-
-如果训练语料是 JSONL，并且你已经在训练环境安装了 `pyarrow`，可以让脚本顺手物化成 parquet：
-
-```bash
-python scripts/prepare_training_runtime.py \
-  --manifest-path outputs/training_bundle_rl/phase_c_grpo/manifest.json \
+  --manifest-path outputs/training_bundle/phase_c_grpo/manifest.json \
   --run-dir outputs/runtime_runs/phase_c_grpo \
   --materialize-data
 ```
 
-如果当前环境已经安装 `verl`，也可以直接执行：
+### 11.10 真正执行训练
+
+SFT：
 
 ```bash
 python scripts/prepare_training_runtime.py \
-  --manifest-path outputs/training_bundle_rl/phase_c_grpo/manifest.json \
+  --manifest-path outputs/training_bundle/phase_a_sft/manifest.json \
+  --run-dir outputs/runtime_runs/phase_a_sft \
+  --execute
+```
+
+DPO：
+
+```bash
+python scripts/prepare_training_runtime.py \
+  --manifest-path outputs/training_bundle/phase_b_dpo/manifest.json \
+  --run-dir outputs/runtime_runs/phase_b_dpo \
+  --execute
+```
+
+RL：
+
+```bash
+python scripts/prepare_training_runtime.py \
+  --manifest-path outputs/training_bundle/phase_c_grpo/manifest.json \
   --run-dir outputs/runtime_runs/phase_c_grpo \
   --materialize-data \
   --execute
 ```
 
-RL 生成结果包含：
-
-- `runtime_plan.json`
-- `launch.sh`
-- `data/phase_c_grpo.train.parquet`，仅在需要且成功物化时生成
-
-运行逻辑：
-
-- `phase_c_grpo` / `phase_c_rloo` 会桥接到 `python -m verl.trainer.main_ppo`
-- 通过 `algorithm.adv_estimator=grpo|rloo` 区分算法
-- 通过 `custom_reward_function.path=.../verl_reward.py` 接入当前仓库 verifier reward
-- `phase_c` 当前仍默认使用 verifier reward，而不是独立 reward model
-- `python scripts/prepare_verl_runtime.py` 仍保留为兼容入口，但推荐统一使用 `prepare_training_runtime.py`
-
-## 11. 推荐执行路径
-
-如果从零开始走一遍最小闭环，建议顺序：
-
-1. 安装依赖并跑 `pytest`
-2. 跑 `veridoc-rl-smoke`
-3. 生成 `SFT_gold` 或 `RL_prompt_only`
-4. 准备 Phase A 训练语料
-5. 跑 `run_phase_a_eval.py`
-6. 对不同 reward profile 生成多份 report
-7. 跑 `compare_phase_reports.py`
-8. 构造 `DPO_preference`
-9. 用 `prepare_training_data.py` 导出 `phase_b_dpo`
-10. 用 `generate_training_manifests.py` 生成 manifest bundle
-11. 用 `prepare_training_runtime.py` 为 `phase_b_dpo` 或 `phase_c_*` 生成 launch plan
-
-## 12. 测试覆盖
-
-当前测试关注：
-
-- schema round-trip
-- rule registry
-- normalizer/verifier/reward
-- synthetic generator
-- preference 构造
-- Phase A 评测
-- experiment matrix 与多报告对比
-- training prompt / corpus / manifest 脚手架
-
-如果你改动以下模块，建议对应补测试：
-
-- `data/` 变更：补 synthetic / preference / training corpus 测试
-- `verifiers/` 变更：补 verifier 与 reward 测试
-- `evaluation/` 变更：补 report / comparison 测试
-- `training/` 变更：补 CLI 输出与 manifest 测试
-
-## 13. 推荐开发流程
-
-建议始终用 worktree 做新增模块开发：
+### 11.11 checkpoint 推理回评
 
 ```bash
-cd /home/alvis/projects/llm-study/VeriDoc-RL
-git worktree add /tmp/veridoc-rl-next -b feature_x
-cd /tmp/veridoc-rl-next/VeriDoc-RL
-
-pip install -e .[dev]
-pytest
-
-# 如果要执行 DPO 训练，再补训练依赖
-pip install -e .[train]
-
-cd /home/alvis/projects/llm-study/VeriDoc-RL
-git merge --ff-only feature_x
-git worktree remove /tmp/veridoc-rl-next
+python scripts/run_inference.py \
+  --input-path outputs/sft_gold.jsonl \
+  --output-path outputs/predictions.sft.jsonl \
+  --model-name-or-path outputs/runtime_runs/phase_a_sft/checkpoints
 ```
 
-原因很简单：
+### 11.12 跑评测
 
-- 主工作树保持干净
-- 新线程接手时容易区分“主线代码”和“功能分支”
-- 便于在合并前独立验证
+```bash
+python scripts/run_phase_a_eval.py \
+  --reference-path outputs/sft_gold.jsonl \
+  --prediction-path outputs/predictions.sft.jsonl \
+  --report-path outputs/report.sft.json \
+  --case-export-path outputs/cases.sft.jsonl
+```
 
-## 14. 已知限制
+### 11.13 对比报告
 
-- synthetic 数据仍然是小规模规则驱动，未覆盖真实保单复杂版式
-- OCR robustness 目前通过 `perturbed_predictions` 近似，不是真实 online augmentation
-- 当前 DPO runtime 通过仓库内 `TRL` runner 执行，尚未接入更完整的多机编排、resume 和日志聚合
-- launch plan 默认假设 `verl` 使用 parquet 数据；若上游语料是 JSONL，实际执行前需要 `pyarrow`
-- 当前没有独立的 reward model 训练 / 推理 pipeline；RL 继续默认走 verifier reward
-- 还没有模型推理、candidate 采样和训练日志回流
+```bash
+python scripts/compare_phase_reports.py \
+  --report baseline=outputs/report.baseline.json \
+  --report sft=outputs/report.sft.json \
+  --report dpo=outputs/report.dpo.json \
+  --report rlvr=outputs/report.rlvr.json \
+  --output-dir outputs/report_compare
+```
 
-## 15. 后续优先建议
+## 12. 本地训练编排层 v1
 
-如果继续开发，优先顺序建议如下：
+如果你不想手工一个阶段一个阶段串命令，可以直接用：
 
-1. 接入真实 candidate sampler
-2. 增加 checkpoint 目录协议与实验日志聚合
-3. 加 online rollout executor / candidate sampler
-4. 单独补 reward model 数据、训练与 serving pipeline
-5. 把 comparison 结果自动写入 experiment registry
+```bash
+python scripts/run_pipeline.py \
+  --spec-path configs/pipeline.qwen35.yaml
+```
 
-## 16. 其他文档何时再看
+这个入口会串起：
 
-如果只需要继续编码，通常看 README 就够。
+- baseline candidate generation
+- baseline eval
+- `phase_a_sft`
+- `phase_b_dpo`
+- `phase_c_grpo` 或 `phase_c_rloo`
+- `state.json`
+- `summary.json`
 
-只有在以下情况再读其他文档：
+### 12.1 pipeline spec
 
-- 需要项目原始目标和排期：`docs/project_blueprint.md`
-- 需要对外表述版本：`docs/resume_alignment.md`
-- 需要规则目录全文：`docs/rules_catalog.md`
+默认 spec 在：
 
-## 17. 简版结论
+```text
+configs/pipeline.qwen35.yaml
+```
 
-这个仓库现在已经不是单纯的 verifier demo，而是一个可继续往真实后训练系统推进的骨架：
+关键字段：
 
-- 数据生成已通
-- verifier/reward 已通
-- 评测与对比已通
-- Phase B / C 训练语料已通
-- Phase B 的 TRL-backed DPO runtime 已通
-- Phase C 的 `verl` runtime launch adapter 已通
+```yaml
+run:
+  name: "qwen35_0p8b_mainline"
+  output_root: "outputs/pipelines"
 
-下一步真正缺的是更完整的训练编排层和独立 reward model，而不是再补新的 schema。
+model:
+  baseline: "Qwen/Qwen3.5-0.8B"
+  inference_backend: "vllm"
+  inference_api_base: "http://127.0.0.1:8000/v1"
+
+data:
+  sft_gold_path: "outputs/sft_gold.jsonl"
+  rl_prompt_only_path: "outputs/rl_prompt_only.jsonl"
+
+pipeline:
+  enable_baseline_eval: true
+  enable_sft: true
+  enable_dpo: true
+  enable_rl: true
+  rl_algorithm: "grpo"
+
+execution:
+  prepare_only: false
+  execute_training: true
+  resume: true
+```
+
+### 12.2 prepare-only 模式
+
+如果你想先只验证数据、manifest 和 runtime bundle，不真正训练：
+
+```bash
+python scripts/run_pipeline.py \
+  --spec-path configs/pipeline.qwen35.yaml \
+  --prepare-only
+```
+
+### 12.3 no-resume 模式
+
+如果你想无视已有状态重跑：
+
+```bash
+python scripts/run_pipeline.py \
+  --spec-path configs/pipeline.qwen35.yaml \
+  --no-resume
+```
+
+### 12.4 pipeline 输出目录
+
+默认会写到：
+
+```text
+outputs/pipelines/qwen35_0p8b_mainline/
+```
+
+结构大致如下：
+
+```text
+outputs/pipelines/qwen35_0p8b_mainline/
+  spec.snapshot.json
+  state.json
+  summary.json
+  comparison/
+  baseline/
+    candidates.jsonl
+    predictions.jsonl
+    report.json
+    cases.jsonl
+  phase_a_sft/
+    train.jsonl
+    manifest.json
+    runtime_plan.json
+    launch.sh
+    checkpoints/
+    predictions.jsonl
+    report.json
+    cases.jsonl
+  phase_b_dpo/
+    preferences.jsonl
+    train.jsonl
+    manifest.json
+    runtime_plan.json
+    launch.sh
+    checkpoints/
+    predictions.jsonl
+    report.json
+    cases.jsonl
+  phase_c_grpo/
+    train.jsonl
+    manifest.json
+    runtime_plan.json
+    launch.sh
+    checkpoints/
+    predictions.jsonl
+    report.json
+    cases.jsonl
+```
+
+### 12.5 编排层里已经固定好的依赖关系
+
+编排层当前会自动执行下面这组依赖：
+
+- baseline 使用 `spec.model.baseline`
+- `phase_a_sft` 使用 `spec.model.baseline`
+- `phase_b_dpo` 使用 `phase_a_sft/checkpoints`
+- `phase_c_grpo / phase_c_rloo` 使用 `phase_a_sft/checkpoints`
+
+这是为了避免手工传 checkpoint 时把主线搞乱。
+
+## 13. 从零开始的本地最小闭环
+
+如果你准备第一次在 Windows + WSL 上正式起项目，推荐顺序如下。
+
+### 13.1 第一步：准备环境
+
+```bash
+cd /home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL
+
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+
+# 安装和你机器匹配的 torch
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+# 安装仓库依赖
+pip install -e .[dev,train]
+
+# baseline candidate / RL 相关
+pip install vllm pyarrow
+pip install verl
+```
+
+### 13.2 第二步：确认 GPU 与依赖
+
+```bash
+nvidia-smi
+python -c "import torch; print(torch.cuda.is_available())"
+python -c "import transformers, datasets, peft, trl; print('train-ok')"
+python -c "import vllm; print('vllm-ok')"
+```
+
+只有这些都通了，再继续。
+
+### 13.3 第三步：生成数据
+
+```bash
+mkdir -p outputs
+
+python scripts/generate_sft_dataset.py \
+  --count 200 \
+  --seed 7 \
+  --task-type SFT_gold \
+  --output-path outputs/sft_gold.jsonl
+
+python scripts/generate_sft_dataset.py \
+  --count 200 \
+  --seed 11 \
+  --task-type RL_prompt_only \
+  --output-path outputs/rl_prompt_only.jsonl
+```
+
+### 13.4 第四步：启动 vLLM
+
+```bash
+vllm serve Qwen/Qwen3.5-0.8B \
+  --host 127.0.0.1 \
+  --port 8000 \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.85
+```
+
+另开一个终端后验证：
+
+```bash
+curl http://127.0.0.1:8000/v1/models
+```
+
+### 13.5 第五步：先跑一遍 prepare-only pipeline
+
+```bash
+python scripts/run_pipeline.py \
+  --spec-path configs/pipeline.qwen35.yaml \
+  --prepare-only
+```
+
+这一步会先验证：
+
+- baseline 数据链路
+- SFT / DPO / RL 的语料导出
+- manifest 生成
+- runtime plan 生成
+
+### 13.6 第六步：正式执行 pipeline
+
+```bash
+python scripts/run_pipeline.py \
+  --spec-path configs/pipeline.qwen35.yaml
+```
+
+### 13.7 第七步：看关键产物
+
+```bash
+ls outputs/pipelines/qwen35_0p8b_mainline
+cat outputs/pipelines/qwen35_0p8b_mainline/state.json
+cat outputs/pipelines/qwen35_0p8b_mainline/summary.json
+```
+
+## 14. 低资源参数建议
+
+如果显存紧张，优先按下面顺序调整。
+
+### 14.1 baseline candidate generation
+
+- 降低 `max_new_tokens`
+- 保持 `num_candidates=4`，先降 batch，不要先降成单候选
+- `temperature` 不要太低，否则多候选太相似
+
+### 14.2 SFT / DPO
+
+优先保留：
+
+- `adapter_type = qlora`
+- `load_in_4bit = true`
+
+优先下调：
+
+- `per_device_train_batch_size`
+- `max_length`
+
+然后再提高：
+
+- `gradient_accumulation_steps`
+
+### 14.3 RL
+
+优先下调：
+
+- `rollout_n`
+- `max_response_length`
+- `ppo_micro_batch_size_per_gpu`
+
+最后再考虑减少样本量。
+
+## 15. 常见判断题
+
+### Q1. 推理框架是不是 vLLM
+
+baseline candidate generation：是。  
+训练后 checkpoint 回评：不是，走本地 `transformers`。
+
+### Q2. SFT 是不是用 vLLM 训练
+
+不是。  
+当前 SFT 训练框架是仓库内的 `transformers.Trainer + datasets + peft` runner。
+
+### Q3. DPO 是不是也用同一套 SFT 代码
+
+不是。  
+当前 DPO 用的是 `TRL DPOTrainer`。
+
+### Q4. RL 现在是不是 reward model
+
+不是。  
+当前默认还是 verifier-based reward。
+
+### Q5. 要不要先手工下载 Qwen/Qwen3.5-0.8B
+
+不需要。  
+默认按需下载；只有离线环境才需要提前缓存到本地路径。
+
+## 16. 已知限制
+
+- synthetic 数据仍是规则驱动，不是大规模真实保单
+- `phase_c` 仍然默认使用 verifier reward，而不是独立 RM
+- 当前 orchestration 是本地单机 v1，不是分布式训练平台
+- `run_pipeline.py` 当前更适合“把主线跑通”，还不是“大量实验托管系统”
+- 当前文档已经按本地单机模式整理，不再把云端训练作为默认路线
+
+## 17. 其他文档
+
+如果你继续按本地单机模式启动项目，推荐再看两份文档：
+
+- `docs/local_data_cloud_training_runbook.md`
+  - 现在已同步改成本地单机执行清单
+- `scripts/README.md`
+  - 汇总脚本入口与它们对应的框架边界
+
+如果你只是想开始跑项目，优先顺序建议是：
+
+1. 先把 WSL 里的 Python 3.12 + CUDA + `torch` + `vllm` 打通
+2. 再跑 `pytest`
+3. 再跑 `prepare-only pipeline`
+4. 最后再跑完整 pipeline

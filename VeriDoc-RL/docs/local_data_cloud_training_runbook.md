@@ -72,18 +72,16 @@ cd /home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL
 如果 WSL 里已经有 `python3.12`：
 
 ```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
+python3.12 -m venv .venv-vllm
+python3.12 -m venv .venv-rl
 ```
 
 如果你准备用 `uv`：
 
 ```bash
 uv python install 3.12
-uv venv --python 3.12 .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
+uv venv --python 3.12 .venv-vllm
+uv venv --python 3.12 .venv-rl
 ```
 
 ### 4.3 GPU 检查
@@ -104,35 +102,44 @@ Failed to initialize NVML: GPU access blocked by the operating system
 
 ### 4.4 安装依赖
 
-先安装 CUDA 匹配的 `torch`，再装仓库和运行时依赖。
+建议直接分成两个环境安装：
+
+- `.venv-vllm`
+  - 只启动 baseline candidate generation 的 `vLLM` 服务
+- `.venv-rl`
+  - 跑仓库代码、`prepare-only`、SFT、DPO、RL
+  - 当前默认 RL rollout backend 是 `sglang`
 
 示意命令：
 
 ```bash
+source .venv-vllm/bin/activate
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+pip install vllm
+
+source .venv-rl/bin/activate
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 pip install -e .[dev,train]
-pip install vllm pyarrow
-pip install verl
+pip install pyarrow verl sglang
 ```
 
 说明：
 
 - 上面 `cu124` 只是示意，要改成与你机器匹配的 CUDA wheel 源
-- 如果你先只跑 `baseline / SFT / DPO`，可以暂时不装 `verl`
-- 如果你只想先做 dry-run，也可以先不装全套
+- `vLLM` 和 `verl` 不再建议强行塞进同一个环境
+- 如果你只想先做 dry-run，也建议直接用 `.venv-rl`
 
 ### 4.5 快速验证依赖
 
 ```bash
+source .venv-vllm/bin/activate
+python -c "import torch; print(torch.cuda.is_available())"
+python -c "import vllm; print('vllm-ok')"
+
+source .venv-rl/bin/activate
 python -c "import torch; print(torch.cuda.is_available())"
 python -c "import transformers, datasets, peft, trl; print('train-ok')"
-python -c "import vllm; print('vllm-ok')"
-```
-
-如果还要跑 RL：
-
-```bash
-python -c "import pyarrow, verl; print('rl-ok')"
+python -c "import pyarrow, verl, sglang; print('rl-ok')"
 ```
 
 ## 5. 输出目录建议
@@ -195,7 +202,7 @@ python scripts/generate_sft_dataset.py \
 开一个终端，保持服务常驻：
 
 ```bash
-source .venv/bin/activate
+source .venv-vllm/bin/activate
 
 vllm serve Qwen/Qwen3.5-0.8B \
   --host 127.0.0.1 \
@@ -207,7 +214,7 @@ vllm serve Qwen/Qwen3.5-0.8B \
 再开一个终端做检查：
 
 ```bash
-source .venv/bin/activate
+source .venv-vllm/bin/activate
 curl http://127.0.0.1:8000/v1/models
 ```
 
@@ -303,6 +310,7 @@ python scripts/run_pipeline.py \
 - `outputs/sft_gold.jsonl`
 - `outputs/rl_prompt_only.jsonl`
 - 本地 `vLLM` 服务
+- `.venv-rl`
 
 可以直接执行：
 
@@ -443,6 +451,7 @@ python scripts/compare_phase_reports.py \
 
 - `vLLM` 负责 baseline 多候选采样
 - `transformers` 负责训练和 checkpoint 本地推理
+- `verl + sglang` 负责 RL rollout
 
 ### Q2. `trl_sft.py` 为什么不是 TRL 的 SFTTrainer
 

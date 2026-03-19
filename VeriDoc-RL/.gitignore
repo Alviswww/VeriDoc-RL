@@ -1,4 +1,7 @@
 ﻿.idea/
+.venv/
+.venv-vllm/
+.venv-rl/
 __pycache__/
 *.pyc
 *.pyo

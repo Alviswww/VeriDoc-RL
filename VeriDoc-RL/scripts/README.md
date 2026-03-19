@@ -5,10 +5,12 @@
 先看最关键的边界：
 
 - `vLLM` 只负责 baseline candidate generation
+- `vLLM` 推荐放在单独的 `.venv-vllm`
 - `transformers + peft` 负责 checkpoint 本地推理
+- 仓库主流程推荐放在 `.venv-rl`
 - `phase_a_sft` 负责本地 SFT，当前实现是 `transformers.Trainer + datasets + peft`
 - `phase_b_dpo` 负责本地 DPO，当前实现是 `TRL DPOTrainer`
-- `phase_c_grpo / phase_c_rloo` 负责 RL，当前桥接到 `verl`
+- `phase_c_grpo / phase_c_rloo` 负责 RL，当前桥接到 `verl`，默认 rollout backend 是 `sglang`
 
 ## 数据与评测
 
