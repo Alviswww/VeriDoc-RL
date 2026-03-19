@@ -139,6 +139,40 @@ def load_causal_lm(
     return model
 
 
+def load_generation_model(
+    *,
+    model_name_or_path: str,
+    adapter_config: AdapterConfig,
+    precision_config: PrecisionConfig,
+) -> Any:
+    model_kwargs = build_model_load_kwargs(
+        adapter_config=adapter_config,
+        precision_config=precision_config,
+    )
+    model_kwargs["device_map"] = "auto"
+    model_path = Path(model_name_or_path)
+
+    if model_path.exists() and (model_path / "adapter_config.json").exists():
+        try:
+            from peft import AutoPeftModelForCausalLM
+        except ImportError as exc:
+            raise RuntimeError(
+                "Loading a PEFT checkpoint for inference requires `peft`."
+            ) from exc
+        model = AutoPeftModelForCausalLM.from_pretrained(model_name_or_path, **model_kwargs)
+    else:
+        try:
+            from transformers import AutoModelForCausalLM
+        except ImportError as exc:
+            raise RuntimeError(
+                "Model loading requires the optional training dependencies "
+                "(`transformers`, `accelerate`, and usually `peft`)."
+            ) from exc
+        model = AutoModelForCausalLM.from_pretrained(model_name_or_path, **model_kwargs)
+    model.eval()
+    return model
+
+
 def build_model_load_kwargs(
     *,
     adapter_config: AdapterConfig,
@@ -214,3 +248,4 @@ def _coerce_string_tuple(value: Any) -> tuple[str, ...]:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
         return tuple(str(item) for item in value)
     return tuple(DEFAULT_LORA_TARGET_MODULES)
+from pathlib import Path

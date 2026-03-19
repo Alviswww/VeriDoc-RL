@@ -125,20 +125,26 @@ cd /home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL
 8. `src/veridoc_rl/inference/candidates.py`
    - 通过 `vLLM` OpenAI-compatible API 生成多候选 prediction
    - 输出与 DPO preference 构造兼容的 `candidate.jsonl`
-9. `src/veridoc_rl/training/manifests.py`
+9. `src/veridoc_rl/inference/runner.py`
+   - 使用本地 `transformers`/checkpoint 做离线推理
+   - 导出统一 `predictions.jsonl` 供训练后回评
+10. `src/veridoc_rl/orchestration/`
+   - 提供 `PipelineSpec`、`PipelineState`、标准路径布局和阶段调度
+   - 串起 baseline / SFT / DPO / RLVR 的多阶段执行
+11. `src/veridoc_rl/training/manifests.py`
    - 从 experiment matrix 和训练语料路径生成训练 manifest bundle
-10. `src/veridoc_rl/training/runtime.py`
+12. `src/veridoc_rl/training/runtime.py`
    - 从 `manifest.json` 生成 `runtime_plan.json` 和 `launch.sh`
    - 把 `phase_a_sft` 桥接到仓库内 SFT runner
    - 把 `phase_b_dpo` 桥接到仓库内 `TRL` DPO runner
    - 把 `phase_c_grpo / phase_c_rloo` 桥接到 `verl.trainer.main_ppo`
-11. `src/veridoc_rl/training/trl_sft.py`
+13. `src/veridoc_rl/training/trl_sft.py`
    - 提供 QLoRA / LoRA SFT runner
    - 负责本地 JSONL -> tokenizer / trainer 数据集转换与训练执行
-12. `src/veridoc_rl/training/trl_dpo.py`
+14. `src/veridoc_rl/training/trl_dpo.py`
    - 提供 TRL-backed DPO runner
    - 负责本地 JSONL -> TRL dataset rows 的转换与训练执行
-13. `src/veridoc_rl/training/verl_reward.py`
+15. `src/veridoc_rl/training/verl_reward.py`
    - 提供 `verl` 可调用的 verifier-based `compute_score`
 
 ## 5. 数据契约
@@ -614,6 +620,21 @@ python scripts/generate_candidates.py \
 - `temperature` 太低时，多候选会变得非常相似，`reward_margin` 可能不够
 - `temperature` 太高时，JSON 合法率会下降，后续 preference 质量会变差
 
+### 10.4.1 运行本地 checkpoint 推理
+
+```bash
+python scripts/run_inference.py \
+  --input-path outputs/sft_gold.jsonl \
+  --output-path outputs/predictions.sft.jsonl \
+  --model-name-or-path outputs/runtime_runs/phase_a_sft/checkpoints
+```
+
+这个脚本主要用于：
+
+- SFT 训练后生成评测用 prediction
+- DPO / RL 训练后回写统一 `predictions.jsonl`
+- 不依赖 vLLM，直接用本地 `transformers` 加载 checkpoint
+
 ### 10.5 生成 preference 数据
 
 ```bash
@@ -884,6 +905,37 @@ python scripts/prepare_training_runtime.py --manifest-path outputs/training_bund
 2. 保留任务和 reward 不变
 3. 先缩 batch / context / rollout
 4. 再决定是否减少样本量
+
+### 10.15 一键串起完整主线
+
+如果你已经准备好了：
+
+- `outputs/sft_gold.jsonl`
+- `outputs/rl_prompt_only.jsonl`
+- 可访问的 vLLM 服务
+
+那么可以直接用：
+
+```bash
+python scripts/run_pipeline.py \
+  --spec-path configs/pipeline.qwen35.yaml
+```
+
+它会负责：
+
+- baseline candidate / eval
+- `phase_a_sft`
+- `phase_b_dpo`
+- `phase_c_grpo` 或 `phase_c_rloo`
+- `state.json` / `summary.json`
+
+如果你只想先生成 bundle，不真正执行训练：
+
+```bash
+python scripts/run_pipeline.py \
+  --spec-path configs/pipeline.qwen35.yaml \
+  --prepare-only
+```
 
 ## 11. 推荐执行路径
 

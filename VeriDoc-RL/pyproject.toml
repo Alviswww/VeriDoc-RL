@@ -35,6 +35,8 @@ veridoc-rl-generate-plan = "veridoc_rl.experiments.matrix:main"
 veridoc-rl-compare-reports = "veridoc_rl.evaluation.comparison:main"
 veridoc-rl-prepare-training = "veridoc_rl.training.corpus:main"
 veridoc-rl-generate-training-manifests = "veridoc_rl.training.manifests:main"
+veridoc-rl-run-inference = "veridoc_rl.inference.runner:main"
+veridoc-rl-run-pipeline = "veridoc_rl.orchestration.runner:main"
 veridoc-rl-prepare-runtime = "veridoc_rl.training.runtime:main"
 veridoc-rl-prepare-verl-runtime = "veridoc_rl.training.runtime:main"
 

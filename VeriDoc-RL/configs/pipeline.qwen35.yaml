@@ -1,0 +1,33 @@
+run:
+  name: "qwen35_0p8b_mainline"
+  output_root: "outputs/pipelines"
+
+model:
+  baseline: "Qwen/Qwen3.5-0.8B"
+  inference_backend: "vllm"
+  inference_api_base: "http://127.0.0.1:8000/v1"
+  inference_api_key: "EMPTY"
+
+data:
+  sft_gold_path: "outputs/sft_gold.jsonl"
+  rl_prompt_only_path: "outputs/rl_prompt_only.jsonl"
+
+generation:
+  candidate_count: 4
+  temperature: 0.8
+  top_p: 0.95
+  max_new_tokens: 1024
+
+pipeline:
+  enable_baseline_eval: true
+  enable_sft: true
+  enable_dpo: true
+  enable_rl: true
+  rl_algorithm: "grpo"
+
+execution:
+  prepare_only: false
+  execute_training: true
+  resume: true
+
+matrix_path: "configs/experiment_matrix.yaml"

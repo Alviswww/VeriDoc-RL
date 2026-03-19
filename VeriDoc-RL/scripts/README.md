@@ -9,6 +9,10 @@
   - 读取带 `input` 的 JSONL
   - 通过 `vLLM` OpenAI-compatible API 生成多候选 `candidate.jsonl`
   - 输出格式可直接喂给 `generate_preference_dataset.py`
+- `python scripts/run_inference.py`
+  - 读取带 `input` 的 JSONL
+  - 使用本地 `transformers`/checkpoint 做离线推理
+  - 导出统一 `predictions.jsonl`，用于阶段训练后的回评
 - `python scripts/generate_preference_dataset.py`
   - 读取 `reference` 和多候选 `prediction` JSONL
   - 用同一套 verifier + composite reward 生成 `DPO_preference`
@@ -39,3 +43,7 @@
   - 对 `phase_c_grpo` / `phase_c_rloo` 可桥接到 `verl.trainer.main_ppo`
 - `python scripts/prepare_verl_runtime.py`
   - `prepare_training_runtime.py` 的兼容别名
+- `python scripts/run_pipeline.py`
+  - 读取单个 pipeline spec
+  - 串起 baseline / SFT / DPO / RLVR 的阶段化执行
+  - 维护 `state.json` / `summary.json` / checkpoint 依赖关系
