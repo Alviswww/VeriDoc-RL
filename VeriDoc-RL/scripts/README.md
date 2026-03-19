@@ -5,6 +5,10 @@
 - `python scripts/generate_sft_dataset.py`
   - 生成带 bucket 元数据的 synthetic 数据
   - 支持 `SFT_gold`、`SFT_silver`、`RL_prompt_only`
+- `python scripts/generate_candidates.py`
+  - 读取带 `input` 的 JSONL
+  - 通过 `vLLM` OpenAI-compatible API 生成多候选 `candidate.jsonl`
+  - 输出格式可直接喂给 `generate_preference_dataset.py`
 - `python scripts/generate_preference_dataset.py`
   - 读取 `reference` 和多候选 `prediction` JSONL
   - 用同一套 verifier + composite reward 生成 `DPO_preference`
@@ -25,10 +29,12 @@
   - 输出 Phase A SFT、Phase B DPO、Phase C RLVR 可直接消费的 JSONL
 - `python scripts/generate_training_manifests.py`
   - 读取 `experiment_matrix.yaml` 里的训练 runtime 配置
-  - 生成 `phase_b_dpo` / `phase_c_grpo` / `phase_c_rloo` 的训练 manifest bundle
+  - 支持按 phase 传入不同训练语料和 base model
+  - 生成 `phase_a_sft` / `phase_b_dpo` / `phase_c_grpo` / `phase_c_rloo` 的训练 manifest bundle
 - `python scripts/prepare_training_runtime.py`
   - 读取单个 `manifest.json`
   - 生成 `launch.sh` 与 `runtime_plan.json`
+  - 对 `phase_a_sft` 可桥接到仓库内 SFT runner
   - 对 `phase_b_dpo` 可桥接到仓库内 `TRL` DPO runner
   - 对 `phase_c_grpo` / `phase_c_rloo` 可桥接到 `verl.trainer.main_ppo`
 - `python scripts/prepare_verl_runtime.py`

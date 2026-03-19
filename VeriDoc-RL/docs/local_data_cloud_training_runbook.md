@@ -13,28 +13,40 @@
 - 你希望本地只做轻量流程，不在本地硬跑大模型训练
 - 你接受当前仓库的 RL 仍然使用 `verifier reward`，不是独立 reward model
 
+这份 runbook 对应的推荐主线固定为：
+
+1. 本地生成 `SFT_gold`
+2. 本地通过 `vLLM` 生成 `candidate.jsonl`
+3. 本地构造 `preferences.jsonl`
+4. 本地导出 `phase_a_sft` / `phase_b_dpo` / `phase_c_rlvr`
+5. 本地生成 manifest 与 runtime bundle
+6. 云端先跑 `SFT`
+7. 再让 `DPO` 和 `RLVR` 都接在 `SFT checkpoint` 上继续
+8. 训练后自行推理，并回到本地做评测与对比
+
 ## 1. 先认清当前仓库能做什么
 
 当前仓库已经提供：
 
 - synthetic 数据生成
+- vLLM candidate 生成脚本
 - Phase A 评测
 - DPO preference 构造
 - Phase A / B / C 训练语料准备
+- Phase A SFT runtime bundle
 - Phase B DPO runtime bundle
 - Phase C `verl` runtime bundle
 
 当前仓库还**没有**提供：
 
-- 候选生成器 / 推理脚本
 - 模型训练完成后的统一推理脚本
 - 独立 reward model 的训练 pipeline
 
 这意味着：
 
-- 你可以在本地完整生成 `reference`、`DPO_preference`、`phase_b_dpo`、`phase_c_rlvr`
-- 但在构造 DPO preference 之前，你必须先准备一份外部生成的 `candidate predictions`
-- 这份 `candidate predictions` 可以来自你自己的推理脚本、vLLM 服务、云端推理或手工构造的 smoke 数据
+- 你可以在本地完整生成 `reference`、`candidate predictions`、`DPO_preference`、`phase_a_sft`、`phase_b_dpo`、`phase_c_rlvr`
+- 当前 candidate 生成默认通过 `vLLM` OpenAI-compatible API 完成
+- 训练完成后的统一 checkpoint 推理 / 回评脚本仍需后续补齐
 
 ## 2. 路径约定
 
@@ -72,6 +84,70 @@ pip install -e .[train]
 ```
 
 如果只是本地 10G 机器，不建议在本地真正执行 RL 训练。
+
+### 3.1 本地和云端分别装什么
+
+最推荐的环境分工如下：
+
+- 本地
+  - `pip install -e .[dev]`
+  - 如果要 dry-run SFT / DPO runtime，再加 `pip install -e .[train]`
+- 云端训练机
+  - `pip install -e .[train]`
+  - 额外安装与 CUDA 对应的 `torch`
+  - RL 时再补 `verl`、`pyarrow`
+
+如果你不确定本地是否要装 `.[train]`，判断标准很简单：
+
+- 只做数据和评测：不用
+- 要检查 `prepare_training_runtime.py` 生成的配置和 launch plan：建议装
+
+### 3.2 推荐的输出目录约定
+
+为了让 checkpoint 和报告不混乱，建议一开始就固定目录约定：
+
+```text
+outputs/
+  sft_gold.jsonl
+  rl_prompt_only.jsonl
+  candidates.jsonl
+  preferences.jsonl
+  train.phase_a_sft.jsonl
+  train.phase_b_dpo.jsonl
+  train.phase_c_rlvr.jsonl
+  training_bundle/
+  runtime_runs/
+    phase_a_sft/
+    phase_b_dpo/
+    phase_c_grpo/
+```
+
+这样做的好处是：
+
+- 每个阶段的上游输入一眼就能看清
+- `phase_b_dpo` 和 `phase_c_*` 应该接哪个 checkpoint，不容易搞混
+
+### 3.3 vLLM 服务怎么准备
+
+candidate 生成脚本默认不在当前进程内直接加载模型，而是走 `vLLM` OpenAI-compatible API。
+
+如果你准备在某台机器上提供 candidate generation 服务，一个最小启动命令可以是：
+
+```bash
+vllm serve Qwen/Qwen3.5-0.8B \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.85
+```
+
+如果 vLLM 跑在远端机器，只需要在 candidate 脚本里把：
+
+```text
+--api-base http://127.0.0.1:8000/v1
+```
+
+改成远端地址即可。
 
 ## 4. 本地先做基础检查
 
@@ -165,7 +241,7 @@ python scripts/generate_sft_dataset.py \
 
 ### 6.1 准备 prediction 文件
 
-仓库没有推理脚本，所以 `outputs/predictions.jsonl` 需要你自己准备。
+仓库已经提供 candidate 生成脚本，但训练完成后的统一回评脚本还没有完全收敛，所以 `outputs/predictions.jsonl` 仍可以手工准备。
 
 最小格式建议如下，每行一个对象：
 
@@ -234,7 +310,20 @@ python scripts/compare_phase_reports.py \
 
 这是最容易卡住的一步。
 
-当前仓库**不提供 candidate sampler**，所以你必须自己准备 `candidate.jsonl`。
+当前仓库已经提供 `python scripts/generate_candidates.py`，默认通过 `vLLM` OpenAI-compatible API 为每个样本生成多条候选。
+
+### 7.0 先确认 vLLM 连得通
+
+在真正跑 candidate 之前，建议先确认两件事：
+
+1. `--api-base` 指向的服务能访问
+2. `--model` 与 vLLM 实际加载的模型名一致
+
+如果这里对不上，最常见的现象就是：
+
+- API 返回 404 / 400
+- 候选全部为空
+- 候选格式完全不稳定
 
 ### 7.1 candidate 文件最小要求
 
@@ -242,7 +331,7 @@ python scripts/compare_phase_reports.py \
 
 ```json
 {
-  "candidate_id": "qwen25-3b-sample0-cand0",
+  "candidate_id": "Qwen-Qwen3.5-0.8B-sample0-cand0",
   "prediction": {
     "sample_id": "template_a_00000",
     "fields": {
@@ -278,11 +367,37 @@ python scripts/compare_phase_reports.py \
 
 ### 7.3 候选如何生成
 
-你可以用以下任一方式：
+推荐直接用仓库脚本：
 
-- 你自己的推理脚本，读取 `outputs/sft_gold.jsonl` 里的 `input`，调用模型生成 JSON
-- 云端 vLLM / Transformers 推理后，把结果写回本地 JSONL
-- 手工构造少量 smoke 数据，用来验证 preference pipeline
+```bash
+python scripts/generate_candidates.py \
+  --input-path outputs/sft_gold.jsonl \
+  --output-path outputs/candidate.jsonl \
+  --model Qwen/Qwen3.5-0.8B \
+  --api-base http://127.0.0.1:8000/v1 \
+  --num-candidates 4 \
+  --temperature 0.8 \
+  --top-p 0.95
+```
+
+前提：
+
+- 你已经启动了 vLLM 的 OpenAI-compatible 服务
+- `--input-path` 里的每条记录都包含 `input`
+
+如果你希望候选之间差异更大一些，通常可以这样调：
+
+- `temperature` 从 `0.8` 提高到 `0.9` 或 `1.0`
+- `top_p` 保持在 `0.9~0.95`
+- `num_candidates` 先保持 `4`
+
+如果你发现候选 JSON 合法率太差，通常可以这样调：
+
+- 把 `temperature` 降回 `0.6~0.8`
+- 收紧 `max_new_tokens`
+- 检查 system prompt 有没有被外部改掉
+
+如果你只是想先验证整个 DPO 链路，也仍然可以手工构造少量 smoke 数据。
 
 如果你只是想先验证整个 DPO 链路，推荐先做一个很小的 smoke 集：
 
@@ -324,7 +439,33 @@ python scripts/generate_preference_dataset.py \
 - 候选质量差异不够大
 - `min-margin` 设得太高
 
+这里要非常清楚：
+
+- `DPO_preference` 不是单纯的“谁更像 reference”
+- 它是按当前 verifier + reward profile 排序得到的 chosen / rejected
+- 所以后续如果 reward 设计变化，最好重新生成 preferences，而不是继续复用旧 pair
+
 ## 9. 本地准备训练语料
+
+### 9.0 准备 Phase A SFT 语料
+
+```bash
+python scripts/prepare_training_data.py \
+  --input-path outputs/sft_gold.jsonl \
+  --output-path outputs/train.phase_a_sft.jsonl \
+  --stage phase_a_sft
+```
+
+这一步会把 `SFT_gold` 转成标准 chat 训练语料，核心内容是：
+
+- `messages = [system, user, assistant]`
+- 其中 `assistant` 就是 reference JSON
+
+这一步是后续所有训练阶段的起点，因为：
+
+- `phase_b_dpo` 默认应该接在 `phase_a_sft` checkpoint 上
+- `phase_c_rlvr` 默认也应该接在 `phase_a_sft` checkpoint 上
+- 如果没有先做 SFT，小模型更容易在 schema 和 `validations` 上不稳定
 
 ### 9.1 准备 Phase B DPO 语料
 
@@ -360,45 +501,62 @@ python scripts/prepare_training_data.py \
 
 ## 10. 本地生成训练 manifest
 
-### 10.1 为 DPO 生成 manifest
+### 10.1 为 SFT / DPO / RL 生成 manifest
 
 ```bash
 python scripts/generate_training_manifests.py \
   --matrix-path configs/experiment_matrix.yaml \
-  --train-data-path outputs/train.phase_b_dpo.jsonl \
-  --output-dir outputs/training_bundle_dpo \
-  --base-model Qwen2.5-3B-Instruct
-```
-
-### 10.2 为 RL 生成 manifest
-
-```bash
-python scripts/generate_training_manifests.py \
-  --matrix-path configs/experiment_matrix.yaml \
-  --train-data-path outputs/train.phase_c_rlvr.jsonl \
-  --output-dir outputs/training_bundle_rl \
-  --base-model Qwen2.5-3B-Instruct
+  --phase-a-train-data-path outputs/train.phase_a_sft.jsonl \
+  --phase-b-train-data-path outputs/train.phase_b_dpo.jsonl \
+  --phase-c-train-data-path outputs/train.phase_c_rlvr.jsonl \
+  --output-dir outputs/training_bundle \
+  --phase-a-base-model Qwen/Qwen3.5-0.8B \
+  --phase-b-base-model outputs/runtime_runs/phase_a_sft/checkpoints \
+  --phase-c-base-model outputs/runtime_runs/phase_a_sft/checkpoints
 ```
 
 参数说明：
 
 - `--matrix-path`：实验矩阵
-- `--train-data-path`：上一步生成的训练语料
+- `--phase-a-train-data-path` / `--phase-b-train-data-path` / `--phase-c-train-data-path`：按阶段指定训练语料
 - `--output-dir`：manifest bundle 目录
 - `--eval-data-path`：可选评测语料
-- `--base-model`：强烈建议显式传，不要完全依赖 matrix 默认值
+- `--phase-a-base-model`：SFT 默认基座，通常就是 `Qwen/Qwen3.5-0.8B`
+- `--phase-b-base-model` / `--phase-c-base-model`：建议显式传 SFT checkpoint 路径
 
-如果你本地只是 smoke，建议 `Qwen2.5-1.5B-Instruct`。  
-如果你上云做正式 DPO，可从 `Qwen2.5-3B-Instruct` 起步。  
+这里最容易搞错的是 checkpoint 衔接关系：
+
+- 第一次生成 manifest 时，你可以先填计划中的 checkpoint 路径
+- 真正训练 `phase_b_dpo` 和 `phase_c_*` 前，要把它们的 `base_model` 指向真实的 SFT checkpoint
+- 不建议把 DPO 默认接在 baseline 上
+- 也不建议把 RL 默认接在 DPO checkpoint 上作为主实验线
+
+如果你本地只是 smoke，建议直接用 `Qwen/Qwen3.5-0.8B`。  
+如果你上云做正式 DPO，也建议先把 SFT checkpoint 作为 DPO / RL 的统一起点。  
 如果你要做 RL，建议把更大的模型留给云端。
 
 ## 11. 本地检查 runtime bundle，但不真正训练
 
-### 11.1 DPO runtime dry-run
+### 11.1 SFT runtime dry-run
 
 ```bash
 python scripts/prepare_training_runtime.py \
-  --manifest-path outputs/training_bundle_dpo/phase_b_dpo/manifest.json \
+  --manifest-path outputs/training_bundle/phase_a_sft/manifest.json \
+  --run-dir outputs/runtime_runs/phase_a_sft
+```
+
+你应该看到这些产物：
+
+- `outputs/runtime_runs/phase_a_sft/runtime_plan.json`
+- `outputs/runtime_runs/phase_a_sft/launch.sh`
+- `outputs/runtime_runs/phase_a_sft/sft_config.json`
+- `outputs/runtime_runs/phase_a_sft/data/phase_a_sft.train.jsonl`
+
+### 11.2 DPO runtime dry-run
+
+```bash
+python scripts/prepare_training_runtime.py \
+  --manifest-path outputs/training_bundle/phase_b_dpo/manifest.json \
   --run-dir outputs/runtime_runs/phase_b_dpo
 ```
 
@@ -409,17 +567,32 @@ python scripts/prepare_training_runtime.py \
 - `outputs/runtime_runs/phase_b_dpo/dpo_config.json`
 - `outputs/runtime_runs/phase_b_dpo/data/phase_b_dpo.train.jsonl`
 
-### 11.2 RL runtime dry-run
+### 11.3 RL runtime dry-run
 
 ```bash
 python scripts/prepare_training_runtime.py \
-  --manifest-path outputs/training_bundle_rl/phase_c_grpo/manifest.json \
+  --manifest-path outputs/training_bundle/phase_c_grpo/manifest.json \
   --run-dir outputs/runtime_runs/phase_c_grpo \
   --materialize-data
 ```
 
 这一步如果失败，最常见原因是本地没有 `pyarrow`。  
 如果你只想本地检查，不想装它，也可以先不加 `--materialize-data`。
+
+### 11.4 本地最值得检查的文件
+
+在把 bundle 上传到云端之前，建议至少逐个检查这些文件：
+
+- `outputs/runtime_runs/phase_a_sft/sft_config.json`
+- `outputs/runtime_runs/phase_b_dpo/dpo_config.json`
+- `outputs/runtime_runs/phase_c_grpo/runtime_plan.json`
+
+重点看：
+
+- `model_name_or_path` 是否对
+- `train_data_path` 是否对
+- `output_dir` 是否对
+- `phase_b_dpo` / `phase_c_*` 的 base model 是否已经指向 SFT checkpoint
 
 ## 12. 需要上传到云端的内容
 
@@ -434,14 +607,71 @@ python scripts/prepare_training_runtime.py \
 最小需要带上的内容：
 
 - 整个仓库源码
+- `outputs/train.phase_a_sft.jsonl`
 - `outputs/train.phase_b_dpo.jsonl`
 - `outputs/train.phase_c_rlvr.jsonl`
-- `outputs/training_bundle_dpo/`
-- `outputs/training_bundle_rl/`
+- `outputs/training_bundle/`
 
 如果你不想上传整个 `outputs/`，至少带这几项。
 
+### 12.1 建议在云端先跑 SFT
+
+虽然这一节标题是“上传内容”，但在动作顺序上请优先记住：
+
+- 先上传
+- 先跑 SFT
+- 拿到稳定的 SFT checkpoint
+- 再跑 DPO 与 RL
+
+如果你跳过这一步，直接在 baseline 上做 DPO / RL，小模型更容易出现：
+
+- JSON schema 退化
+- `validations` 丢失
+- 字段空值增多
+- verifier reward 波动更大
+
+### 12.2 一个清晰的 checkpoint 关系图
+
+推荐把 checkpoint 关系理解成：
+
+```text
+Qwen/Qwen3.5-0.8B
+  -> phase_a_sft/checkpoints
+      -> phase_b_dpo/checkpoints
+      -> phase_c_grpo/checkpoints
+      -> phase_c_rloo/checkpoints
+```
+
+当前默认主线没有：
+
+```text
+phase_b_dpo/checkpoints -> phase_c_grpo/checkpoints
+```
+
+因为默认实验设计不把 RL 视作 DPO 的后续阶段。
+
+### 12.3 云端先跑 SFT 的最小命令
+
+如果你已经把仓库和 `outputs/` 上传到云端，建议第一个真正执行的命令是：
+
+```bash
+python scripts/prepare_training_runtime.py \
+  --manifest-path outputs/training_bundle/phase_a_sft/manifest.json \
+  --run-dir outputs/cloud_runs/phase_a_sft \
+  --execute
+```
+
+第一次执行前，建议先不加 `--execute` 看一眼：
+
+- `runtime_plan.json`
+- `sft_config.json`
+- `launch.sh`
+
+确认无误后再正式启动训练。
+
 ## 13. 云端执行 DPO
+
+在真正开始 DPO 前，请先确认你已经拿到可用的 SFT checkpoint。
 
 ### 13.1 建议的云端机器
 
@@ -469,7 +699,7 @@ pip install -e .[train]
 
 ```bash
 python scripts/prepare_training_runtime.py \
-  --manifest-path outputs/training_bundle_dpo/phase_b_dpo/manifest.json \
+  --manifest-path outputs/training_bundle/phase_b_dpo/manifest.json \
   --run-dir outputs/cloud_runs/phase_b_dpo
 ```
 
@@ -477,7 +707,7 @@ python scripts/prepare_training_runtime.py \
 
 ```bash
 python scripts/prepare_training_runtime.py \
-  --manifest-path outputs/training_bundle_dpo/phase_b_dpo/manifest.json \
+  --manifest-path outputs/training_bundle/phase_b_dpo/manifest.json \
   --run-dir outputs/cloud_runs/phase_b_dpo \
   --execute
 ```
@@ -503,6 +733,13 @@ python scripts/prepare_training_runtime.py \
 - `per_device_train_batch_size=2`
 - `gradient_accumulation_steps=8`
 
+如果显存仍然不够，调参优先级建议是：
+
+1. 先把 `per_device_train_batch_size` 从 `2` 降到 `1`
+2. 再提高 `gradient_accumulation_steps`
+3. 再适度降低 `max_length`
+4. 最后才考虑改模型
+
 ## 14. 云端执行 RL
 
 ### 14.1 建议的云端机器
@@ -522,11 +759,16 @@ python scripts/prepare_training_runtime.py \
 - 通常还需要 `vllm`
 - 与 CUDA 版本匹配的 `torch`
 
+一个现实建议是：
+
+- 如果你只是想先把 RL 管线跑通，先做 `GRPO`
+- `RLOO` 可以作为补充算法，不必一开始就双线并行
+
 ### 14.3 生成 RL runtime bundle
 
 ```bash
 python scripts/prepare_training_runtime.py \
-  --manifest-path outputs/training_bundle_rl/phase_c_grpo/manifest.json \
+  --manifest-path outputs/training_bundle/phase_c_grpo/manifest.json \
   --run-dir outputs/cloud_runs/phase_c_grpo \
   --materialize-data
 ```
@@ -535,7 +777,7 @@ python scripts/prepare_training_runtime.py \
 
 ```bash
 python scripts/prepare_training_runtime.py \
-  --manifest-path outputs/training_bundle_rl/phase_c_grpo/manifest.json \
+  --manifest-path outputs/training_bundle/phase_c_grpo/manifest.json \
   --run-dir outputs/cloud_runs/phase_c_grpo \
   --materialize-data \
   --execute
@@ -544,8 +786,17 @@ python scripts/prepare_training_runtime.py \
 如果你想跑 `RLOO`，把 manifest 路径替换成：
 
 ```text
-outputs/training_bundle_rl/phase_c_rloo/manifest.json
+outputs/training_bundle/phase_c_rloo/manifest.json
 ```
+
+RL 显存压力大的时候，优先调这些：
+
+- `rollout_n`
+- `max_response_length`
+- `ppo_micro_batch_size_per_gpu`
+- `log_prob_micro_batch_size_per_gpu`
+
+不要第一时间就改 verifier reward 权重，因为那会同时改变实验目标。
 
 ## 15. 训练完之后如何评测
 
@@ -553,6 +804,15 @@ outputs/training_bundle_rl/phase_c_rloo/manifest.json
 
 1. 用训练后的 checkpoint 做推理，生成 `prediction.jsonl`
 2. 重新调用评测脚本
+
+实际执行时建议至少保留 4 份 prediction / report：
+
+- baseline
+- sft
+- dpo
+- rlvr
+
+这样你后面在 `compare_phase_reports.py` 里才能做真正对齐的横向比较。
 
 评测命令仍然是：
 
@@ -637,22 +897,36 @@ python scripts/compare_phase_reports.py \
 - `compute_score()` 依赖模型输出能被解析成 JSON；格式很差时不会报错退出，而是回退到空字段并给低 reward
 - 这条路线并不等价于“已经支持 reward model 训练”
 
+再强调一次：
+
+- 当前 `verl_reward.py` 提供的是 verifier-based reward bridge
+- 它不是一个单独训练出来的 reward model
+- 如果以后你要研究 RM，需要额外补数据构造、训练和 serving
+
 ## 17. 建议的实际执行顺序
 
 如果你现在马上要开始做实验，建议按这个顺序：
 
 1. 本地 `pytest`
 2. 本地生成 `SFT_gold`
-3. 本地准备少量 `candidate.jsonl`
+3. 本地用 `generate_candidates.py` 生成少量 `candidate.jsonl`
 4. 本地生成 `preferences.jsonl`
-5. 本地生成 `train.phase_b_dpo.jsonl`
-6. 本地生成 `train.phase_c_rlvr.jsonl`
-7. 本地生成 `training_bundle_dpo` 和 `training_bundle_rl`
-8. 本地 dry-run `prepare_training_runtime.py`
-9. 把整个仓库和 `outputs/` 关键产物上传到云端
-10. 云端先跑 DPO
-11. 云端再跑 RL
-12. 训练后自行推理，回到本地做 Phase A 评测和报告对比
+5. 本地生成 `train.phase_a_sft.jsonl`
+6. 本地生成 `train.phase_b_dpo.jsonl`
+7. 本地生成 `train.phase_c_rlvr.jsonl`
+8. 本地生成统一的 `training_bundle`
+9. 本地先 dry-run `phase_a_sft` / `phase_b_dpo` / `phase_c_*`
+10. 把整个仓库和 `outputs/` 关键产物上传到云端
+11. 云端先跑 SFT
+12. 再把 SFT checkpoint 作为 DPO / RL 基座继续训练
+13. 训练后自行推理，回到本地做 Phase A 评测和报告对比
+
+如果你只想做一个 1 天内能跑完的最小验证版，可以再缩成：
+
+1. `SFT_gold` 只生成 50~100 条
+2. `num_candidates=2`
+3. 先只做 `phase_a_sft` 和 `phase_b_dpo`
+4. RL 等 DPO 跑稳定后再补
 
 ## 18. 对你这台 10G 本地机的直接建议
 
@@ -671,6 +945,14 @@ python scripts/compare_phase_reports.py \
 
 如果只是做本地 smoke，模型建议控制在：
 
-- `Qwen2.5-1.5B-Instruct`
+- `Qwen/Qwen3.5-0.8B`
 
 更正式的 DPO / RL，请直接放云端。
+
+如果你一定要在 10G 本地机上做更多尝试，优先遵循这些原则：
+
+- 先做 candidate generation 和评测
+- 训练时尽量只做 SFT smoke
+- 保持 `QLoRA`
+- 尽量缩短上下文和输出长度
+- 不要把 RL 当成本地第一目标

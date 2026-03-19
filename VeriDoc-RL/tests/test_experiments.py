@@ -21,6 +21,8 @@ def test_load_experiment_matrix_and_expand_plan() -> None:
 
     assert matrix.project["name"] == "VeriDoc-RL"
     assert len(matrix.training_stages) == 3
+    assert matrix.finetune["adapter_type"] == "qlora"
+    assert matrix.inference["backend"] == "vllm"
     assert [item["experiment_name"] for item in plan] == [
         "sft_only",
         "sft_plus_dpo",
@@ -28,6 +30,7 @@ def test_load_experiment_matrix_and_expand_plan() -> None:
         "sft_plus_rlvr_without_cross_field_consistency",
         "sft_plus_rlvr_without_checkbox_logic",
     ]
+    assert plan[0]["recommended_model"] == "Qwen/Qwen3.5-0.8B"
     assert plan[2]["reward_profile"] == "rlvr"
     assert plan[3]["reward_profile"] == "rlvr_without_cross_field_consistency"
 

@@ -9,6 +9,12 @@ from pathlib import Path
 from typing import Any
 
 from veridoc_rl.evaluation import load_jsonl
+from veridoc_rl.training.finetune import (
+    adapter_config_from_mapping,
+    load_causal_lm,
+    load_tokenizer,
+    precision_config_from_mapping,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -27,6 +33,8 @@ class TrlDPOConfig:
     max_completion_length: int
     logging_steps: int
     save_steps: int
+    adapter_config: dict[str, Any]
+    precision_config: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -100,13 +108,14 @@ def load_trl_dpo_config(path: Path) -> TrlDPOConfig:
         max_completion_length=int(payload["max_completion_length"]),
         logging_steps=int(payload["logging_steps"]),
         save_steps=int(payload["save_steps"]),
+        adapter_config=dict(payload.get("adapter_config", {})),
+        precision_config=dict(payload.get("precision_config", {})),
     )
 
 
 def execute_trl_dpo_training(config: TrlDPOConfig) -> int:
     try:
         from datasets import Dataset
-        from transformers import AutoModelForCausalLM, AutoTokenizer
         from trl import DPOConfig, DPOTrainer
     except ImportError as exc:
         raise RuntimeError(
@@ -121,11 +130,12 @@ def execute_trl_dpo_training(config: TrlDPOConfig) -> int:
             build_trl_dpo_rows(load_jsonl(Path(config.eval_data_path)))
         )
 
-    tokenizer = AutoTokenizer.from_pretrained(config.model_name_or_path)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    model = AutoModelForCausalLM.from_pretrained(config.model_name_or_path)
+    tokenizer = load_tokenizer(config.model_name_or_path)
+    model = load_causal_lm(
+        model_name_or_path=config.model_name_or_path,
+        adapter_config=adapter_config_from_mapping(config.adapter_config),
+        precision_config=precision_config_from_mapping(config.precision_config),
+    )
     training_args = DPOConfig(
         output_dir=config.output_dir,
         learning_rate=config.learning_rate,

@@ -1,5 +1,6 @@
 [console_scripts]
 veridoc-rl-compare-reports = veridoc_rl.evaluation.comparison:main
+veridoc-rl-generate-candidates = veridoc_rl.inference.candidates:main
 veridoc-rl-generate-plan = veridoc_rl.experiments.matrix:main
 veridoc-rl-generate-preferences = veridoc_rl.data.preferences:main
 veridoc-rl-generate-sft = veridoc_rl.data.synthetic:main

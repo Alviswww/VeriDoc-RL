@@ -42,6 +42,8 @@ class ExperimentMatrix:
     base_model: dict[str, str]
     data: dict[str, Any]
     training_stages: tuple[TrainingStage, ...]
+    finetune: dict[str, Any]
+    inference: dict[str, Any]
     training_runtime: dict[str, Any]
     reward: dict[str, Any]
     evaluation: dict[str, Any]
@@ -55,6 +57,8 @@ class ExperimentMatrix:
                 {"name": stage.name, "method": stage.method, "goal": stage.goal}
                 for stage in self.training_stages
             ],
+            "finetune": dict(self.finetune),
+            "inference": dict(self.inference),
             "training_runtime": dict(self.training_runtime),
             "reward": dict(self.reward),
             "evaluation": dict(self.evaluation),
@@ -87,6 +91,8 @@ def load_experiment_matrix(path: Path = DEFAULT_MATRIX_PATH) -> ExperimentMatrix
         base_model={key: str(value) for key, value in _as_mapping(payload.get("base_model"), field_name="base_model").items()},
         data=_as_mapping(payload.get("data"), field_name="data"),
         training_stages=training_stages,
+        finetune=_as_mapping(payload.get("finetune", {}), field_name="finetune"),
+        inference=_as_mapping(payload.get("inference", {}), field_name="inference"),
         training_runtime=_as_mapping(
             payload.get("training_runtime", {}),
             field_name="training_runtime",

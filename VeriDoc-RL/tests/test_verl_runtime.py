@@ -78,8 +78,11 @@ def test_build_runtime_launch_plan_supports_grpo_phase(tmp_path: Path) -> None:
     matrix = load_experiment_matrix(Path("configs/experiment_matrix.yaml"))
     manifests = build_training_manifests(
         matrix,
-        train_data_path=Path("outputs/train.phase_c_rlvr.parquet"),
         output_dir=tmp_path / "bundle",
+        train_data_paths={
+            "phase_c_grpo": Path("outputs/train.phase_c_rlvr.parquet"),
+            "phase_c_rloo": Path("outputs/train.phase_c_rlvr.parquet"),
+        },
     )
     manifest = next(item for item in manifests if item.name == "phase_c_grpo")
 
@@ -97,8 +100,8 @@ def test_build_runtime_launch_plan_supports_phase_b_dpo(tmp_path: Path) -> None:
     matrix = load_experiment_matrix(Path("configs/experiment_matrix.yaml"))
     manifests = build_training_manifests(
         matrix,
-        train_data_path=dpo_corpus_path,
         output_dir=tmp_path / "bundle",
+        train_data_paths={"phase_b_dpo": dpo_corpus_path},
     )
     manifest = next(item for item in manifests if item.name == "phase_b_dpo")
 
@@ -111,12 +114,52 @@ def test_build_runtime_launch_plan_supports_phase_b_dpo(tmp_path: Path) -> None:
     assert (tmp_path / "runs" / manifest.name / "data" / "phase_b_dpo.train.jsonl").exists()
 
 
+def test_build_runtime_launch_plan_supports_phase_a_sft(tmp_path: Path) -> None:
+    sft_corpus_path = tmp_path / "train.phase_a_sft.jsonl"
+    sft_corpus_path.write_text(
+        json.dumps(
+            {
+                "task_type": "SFT_gold",
+                "stage": "phase_a_sft",
+                "sample_id": "sample-1",
+                "messages": [
+                    {"role": "system", "content": "Return JSON only."},
+                    {"role": "user", "content": "Extract the fields."},
+                    {"role": "assistant", "content": '{"sample_id":"sample-1","fields":{},"validations":[]}'},
+                ],
+                "metadata": {},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    matrix = load_experiment_matrix(Path("configs/experiment_matrix.yaml"))
+    manifests = build_training_manifests(
+        matrix,
+        output_dir=tmp_path / "bundle",
+        train_data_paths={"phase_a_sft": sft_corpus_path},
+    )
+    manifest = next(item for item in manifests if item.name == "phase_a_sft")
+
+    plan = build_runtime_launch_plan(manifest, run_dir=tmp_path / "runs" / manifest.name)
+
+    assert plan.supported is True
+    assert plan.runtime_backend == "transformers"
+    assert "veridoc_rl.training.trl_sft" in plan.command_preview
+    assert (tmp_path / "runs" / manifest.name / "sft_config.json").exists()
+    assert (tmp_path / "runs" / manifest.name / "data" / "phase_a_sft.train.jsonl").exists()
+
+
 def test_prepare_verl_runtime_cli_writes_launch_files(tmp_path: Path) -> None:
     matrix = load_experiment_matrix(Path("configs/experiment_matrix.yaml"))
     manifests = build_training_manifests(
         matrix,
-        train_data_path=Path("outputs/train.phase_c_rlvr.parquet"),
         output_dir=tmp_path / "bundle",
+        train_data_paths={
+            "phase_c_grpo": Path("outputs/train.phase_c_rlvr.parquet"),
+            "phase_c_rloo": Path("outputs/train.phase_c_rlvr.parquet"),
+        },
     )
     bundle_dir = tmp_path / "bundle"
     write_runtime_bundle(
@@ -153,8 +196,8 @@ def test_prepare_runtime_cli_writes_dpo_launch_files(tmp_path: Path) -> None:
     matrix = load_experiment_matrix(Path("configs/experiment_matrix.yaml"))
     manifests = build_training_manifests(
         matrix,
-        train_data_path=dpo_corpus_path,
         output_dir=tmp_path / "bundle",
+        train_data_paths={"phase_b_dpo": dpo_corpus_path},
     )
     manifest = next(item for item in manifests if item.name == "phase_b_dpo")
     manifest_dir = tmp_path / "bundle" / manifest.name

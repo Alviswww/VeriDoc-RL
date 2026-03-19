@@ -112,18 +112,26 @@ def test_generate_training_manifests_from_matrix() -> None:
 
     manifests = build_training_manifests(
         matrix,
-        train_data_path=Path("outputs/train.phase_b.jsonl"),
         output_dir=Path("outputs/manifests"),
+        train_data_paths={
+            "phase_a_sft": Path("outputs/train.phase_a_sft.jsonl"),
+            "phase_b_dpo": Path("outputs/train.phase_b_dpo.jsonl"),
+            "phase_c_grpo": Path("outputs/train.phase_c_rlvr.parquet"),
+            "phase_c_rloo": Path("outputs/train.phase_c_rlvr.parquet"),
+        },
     )
 
     assert [item.name for item in manifests] == [
+        "phase_a_sft",
         "phase_b_dpo",
         "phase_c_grpo",
         "phase_c_rloo",
     ]
     assert manifests[0].backend == "multi"
-    assert manifests[0].runtime["backend_name"] == "trl"
-    assert manifests[1].reward_profile == "rlvr"
+    assert manifests[0].runtime["backend_name"] == "transformers"
+    assert manifests[1].runtime["backend_name"] == "trl"
+    assert manifests[2].reward_profile == "rlvr"
+    assert manifests[1].base_model_source == "sft_checkpoint"
 
 
 def test_prepare_training_cli_and_manifest_cli_write_outputs(tmp_path: Path) -> None:
@@ -164,7 +172,7 @@ def test_prepare_training_cli_and_manifest_cli_write_outputs(tmp_path: Path) -> 
         [
             "--matrix-path",
             "configs/experiment_matrix.yaml",
-            "--train-data-path",
+            "--phase-a-train-data-path",
             str(sft_output_path),
             "--output-dir",
             str(manifest_dir),
@@ -172,5 +180,5 @@ def test_prepare_training_cli_and_manifest_cli_write_outputs(tmp_path: Path) -> 
     )
 
     assert manifest_exit_code == 0
-    assert (manifest_dir / "phase_b_dpo" / "manifest.json").exists()
-    assert (manifest_dir / "phase_c_grpo" / "verl.yaml").exists()
+    assert (manifest_dir / "phase_a_sft" / "manifest.json").exists()
+    assert (manifest_dir / "phase_a_sft" / "verl.yaml").exists()

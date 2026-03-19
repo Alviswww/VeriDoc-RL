@@ -13,6 +13,7 @@ from typing import Any
 from veridoc_rl.evaluation import load_jsonl
 from veridoc_rl.training.manifests import TrainingManifest
 from veridoc_rl.training.trl_dpo import TrlDPOConfig, export_trl_dpo_dataset, write_trl_dpo_config
+from veridoc_rl.training.trl_sft import TrlSFTConfig, export_sft_dataset, write_trl_sft_config
 
 DEFAULT_RUNTIME = {
     "project_name": "VeriDoc-RL",
@@ -79,6 +80,7 @@ def load_training_manifest(path: Path) -> TrainingManifest:
         backend=str(payload["backend"]),
         algorithm=str(payload["algorithm"]),
         base_model=str(payload["base_model"]),
+        base_model_source=str(payload.get("base_model_source", "baseline")),
         train_data_path=str(payload["train_data_path"]),
         eval_data_path=(
             str(payload["eval_data_path"]) if payload.get("eval_data_path") is not None else None
@@ -86,6 +88,8 @@ def load_training_manifest(path: Path) -> TrainingManifest:
         output_dir=str(payload["output_dir"]),
         prompt_template=str(payload["prompt_template"]),
         reward_profile=str(payload["reward_profile"]),
+        adapter_config=dict(payload.get("adapter_config", {})),
+        precision_config=dict(payload.get("precision_config", {})),
         trainer=dict(payload.get("trainer", {})),
         runtime=dict(payload.get("runtime", {})),
         notes=[str(item) for item in payload.get("notes", [])],
@@ -131,6 +135,13 @@ def build_runtime_launch_plan(
             reason=str(manifest.runtime.get("reason", "Unsupported runtime manifest.")),
         )
 
+    if runtime_backend == "transformers":
+        return _build_sft_runtime_launch_plan(
+            manifest,
+            run_dir=run_dir,
+            runtime_info=runtime_info,
+            extra_overrides=extra_overrides or [],
+        )
     if runtime_backend == "trl":
         return _build_trl_runtime_launch_plan(
             manifest,
@@ -318,6 +329,8 @@ def _build_trl_runtime_launch_plan(
         max_completion_length=int(manifest.trainer.get("max_completion_length", 1024)),
         logging_steps=int(manifest.trainer.get("logging_steps", 1)),
         save_steps=int(manifest.trainer.get("save_steps", 10)),
+        adapter_config=dict(manifest.adapter_config),
+        precision_config=dict(manifest.precision_config),
     )
     write_trl_dpo_config(config_path, config)
 
@@ -342,6 +355,69 @@ def _build_trl_runtime_launch_plan(
         manifest_name=manifest.name,
         phase=manifest.phase,
         runtime_backend="trl",
+        run_dir=str(run_dir),
+        command=command,
+        command_preview=" ".join(shlex.quote(part) for part in command),
+        train_data_path=str(staged_train),
+        eval_data_path=str(staged_eval) if staged_eval is not None else None,
+        generated_files=generated_files,
+        reason="",
+    )
+
+
+def _build_sft_runtime_launch_plan(
+    manifest: TrainingManifest,
+    *,
+    run_dir: Path,
+    runtime_info: dict[str, Any],
+    extra_overrides: list[str],
+) -> RuntimeLaunchPlan:
+    staged_train = run_dir / "data" / f"{manifest.phase}.train.jsonl"
+    export_sft_dataset(staged_train, load_jsonl(Path(manifest.train_data_path)))
+    staged_eval = None
+    if manifest.eval_data_path is not None:
+        staged_eval = run_dir / "data" / f"{manifest.phase}.eval.jsonl"
+        export_sft_dataset(staged_eval, load_jsonl(Path(manifest.eval_data_path)))
+
+    config_path = run_dir / "sft_config.json"
+    config = TrlSFTConfig(
+        model_name_or_path=manifest.base_model,
+        train_data_path=str(staged_train),
+        eval_data_path=str(staged_eval) if staged_eval is not None else None,
+        output_dir=str(run_dir / "checkpoints"),
+        learning_rate=float(manifest.trainer.get("learning_rate", 2e-4)),
+        num_train_epochs=float(manifest.trainer.get("epochs", 1)),
+        per_device_train_batch_size=int(manifest.trainer.get("per_device_train_batch_size", 2)),
+        gradient_accumulation_steps=int(manifest.trainer.get("gradient_accumulation_steps", 8)),
+        max_length=int(manifest.trainer.get("max_length", 3072)),
+        logging_steps=int(manifest.trainer.get("logging_steps", 1)),
+        save_steps=int(manifest.trainer.get("save_steps", 10)),
+        adapter_config=dict(manifest.adapter_config),
+        precision_config=dict(manifest.precision_config),
+    )
+    write_trl_sft_config(config_path, config)
+
+    command = [
+        str(runtime_info["python_bin"]),
+        "-m",
+        str(manifest.runtime["entrypoint_module"]),
+        "--config-path",
+        str(config_path),
+    ]
+    command.extend(extra_overrides)
+    generated_files = [
+        str(staged_train),
+        str(config_path),
+        str(run_dir / "runtime_plan.json"),
+        str(run_dir / "launch.sh"),
+    ]
+    if staged_eval is not None:
+        generated_files.insert(1, str(staged_eval))
+    return RuntimeLaunchPlan(
+        supported=True,
+        manifest_name=manifest.name,
+        phase=manifest.phase,
+        runtime_backend="transformers",
         run_dir=str(run_dir),
         command=command,
         command_preview=" ".join(shlex.quote(part) for part in command),

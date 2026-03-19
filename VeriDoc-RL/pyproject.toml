@@ -18,6 +18,7 @@ dev = [
 ]
 train = [
   "accelerate>=1,<2",
+  "bitsandbytes>=0.43,<1",
   "datasets>=2.20,<4",
   "peft>=0.11,<1",
   "transformers>=4.46,<5",
@@ -26,6 +27,7 @@ train = [
 
 [project.scripts]
 veridoc-rl-smoke = "veridoc_rl.smoke:main"
+veridoc-rl-generate-candidates = "veridoc_rl.inference.candidates:main"
 veridoc-rl-generate-sft = "veridoc_rl.data.synthetic:main"
 veridoc-rl-generate-preferences = "veridoc_rl.data.preferences:main"
 veridoc-rl-phase-a-eval = "veridoc_rl.evaluation.reporting:main"

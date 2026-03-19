@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from typing import Any
 
+from veridoc_rl.predictions import parse_prediction_text
 from veridoc_rl.rewards import score_verifier_results
 from veridoc_rl.verifiers import run_verifier_suite
 
@@ -19,7 +19,7 @@ def compute_score(
     extra_payload = _coerce_mapping(extra_info) if extra_info is not None else {}
     reward_profile = str(extra_payload.get("reward_profile", "rlvr"))
     context = _coerce_mapping(extra_payload.get("context")) if extra_payload.get("context") is not None else {}
-    prediction = _parse_prediction_text(
+    prediction = parse_prediction_text(
         solution_str,
         sample_id=str(reference.get("sample_id", "")),
     )
@@ -30,33 +30,6 @@ def compute_score(
     )
     reward = score_verifier_results(results, profile=reward_profile)
     return float(reward["total_reward"])
-
-
-def _parse_prediction_text(text: str, *, sample_id: str) -> dict[str, Any]:
-    candidate = text.strip()
-    fenced = _strip_json_fence(candidate)
-    for payload_text in (fenced, candidate):
-        try:
-            payload = json.loads(payload_text)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, Mapping):
-            return {
-                "sample_id": payload.get("sample_id", sample_id),
-                "fields": payload.get("fields", {}),
-                "validations": payload.get("validations", []),
-            }
-    return {"sample_id": sample_id, "fields": {}, "validations": []}
-
-
-def _strip_json_fence(text: str) -> str:
-    stripped = text.strip()
-    if not stripped.startswith("```"):
-        return stripped
-    lines = stripped.splitlines()
-    if len(lines) >= 3 and lines[0].startswith("```") and lines[-1].strip() == "```":
-        return "\n".join(lines[1:-1]).strip()
-    return stripped
 
 
 def _coerce_mapping(value: str | Mapping[str, Any] | Any) -> dict[str, Any]:
