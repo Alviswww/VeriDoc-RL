@@ -16,6 +16,13 @@ dev = [
   "pytest>=7.4,<9",
   "ruff>=0.5,<1",
 ]
+train = [
+  "accelerate>=1,<2",
+  "datasets>=2.20,<4",
+  "peft>=0.11,<1",
+  "transformers>=4.46,<5",
+  "trl>=0.11,<1",
+]
 
 [project.scripts]
 veridoc-rl-smoke = "veridoc_rl.smoke:main"
@@ -26,6 +33,7 @@ veridoc-rl-generate-plan = "veridoc_rl.experiments.matrix:main"
 veridoc-rl-compare-reports = "veridoc_rl.evaluation.comparison:main"
 veridoc-rl-prepare-training = "veridoc_rl.training.corpus:main"
 veridoc-rl-generate-training-manifests = "veridoc_rl.training.manifests:main"
+veridoc-rl-prepare-runtime = "veridoc_rl.training.runtime:main"
 veridoc-rl-prepare-verl-runtime = "veridoc_rl.training.runtime:main"
 
 [tool.setuptools]

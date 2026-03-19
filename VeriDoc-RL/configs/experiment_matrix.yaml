@@ -53,7 +53,7 @@ training_stages:
     goal: "optimize composite verifier reward"
 
 training_runtime:
-  backend: "verl"
+  backend: "multi"
   prompt_template: "veridoc_v1"
   common:
     project_name: "VeriDoc-RL"

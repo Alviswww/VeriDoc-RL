@@ -7,10 +7,43 @@ from veridoc_rl.experiments import load_experiment_matrix
 from veridoc_rl.training.manifests import build_training_manifests
 from veridoc_rl.training.runtime import (
     build_runtime_launch_plan,
-    main as prepare_verl_runtime_main,
     write_runtime_bundle,
 )
+from veridoc_rl.training.runtime import (
+    main as prepare_verl_runtime_main,
+)
 from veridoc_rl.training.verl_reward import compute_score
+
+
+def _write_dpo_corpus(path: Path) -> Path:
+    path.write_text(
+        json.dumps(
+            {
+                "task_type": "DPO_preference",
+                "stage": "phase_b_dpo",
+                "sample_id": "sample-pref",
+                "system_prompt": "Return JSON only.",
+                "prompt": "Extract the fields.",
+                "chosen": (
+                    '{"sample_id":"sample-pref","fields":{"policyholder_name":"张三"},'
+                    '"validations":[]}'
+                ),
+                "rejected": (
+                    '{"sample_id":"sample-pref","fields":{"policyholder_name":""},'
+                    '"validations":[]}'
+                ),
+                "reward_profile": "default",
+                "reward_margin": 0.2,
+                "chosen_candidate_id": "good",
+                "rejected_candidate_id": "bad",
+                "metadata": {"bucket": {"template_family": "template_a"}},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
 
 
 def test_verl_reward_scores_valid_prediction() -> None:
@@ -53,24 +86,29 @@ def test_build_runtime_launch_plan_supports_grpo_phase(tmp_path: Path) -> None:
     plan = build_runtime_launch_plan(manifest, run_dir=tmp_path / "runs" / manifest.name)
 
     assert plan.supported is True
+    assert plan.runtime_backend == "verl"
     assert "verl.trainer.main_ppo" in plan.command_preview
     assert "algorithm.adv_estimator=grpo" in plan.command_preview
     assert "custom_reward_function.path=" in plan.command_preview
 
 
-def test_build_runtime_launch_plan_marks_phase_b_unsupported(tmp_path: Path) -> None:
+def test_build_runtime_launch_plan_supports_phase_b_dpo(tmp_path: Path) -> None:
+    dpo_corpus_path = _write_dpo_corpus(tmp_path / "train.phase_b_dpo.jsonl")
     matrix = load_experiment_matrix(Path("configs/experiment_matrix.yaml"))
     manifests = build_training_manifests(
         matrix,
-        train_data_path=Path("outputs/train.phase_b_dpo.jsonl"),
+        train_data_path=dpo_corpus_path,
         output_dir=tmp_path / "bundle",
     )
     manifest = next(item for item in manifests if item.name == "phase_b_dpo")
 
     plan = build_runtime_launch_plan(manifest, run_dir=tmp_path / "runs" / manifest.name)
 
-    assert plan.supported is False
-    assert "DPO" in plan.reason
+    assert plan.supported is True
+    assert plan.runtime_backend == "trl"
+    assert "veridoc_rl.training.trl_dpo" in plan.command_preview
+    assert (tmp_path / "runs" / manifest.name / "dpo_config.json").exists()
+    assert (tmp_path / "runs" / manifest.name / "data" / "phase_b_dpo.train.jsonl").exists()
 
 
 def test_prepare_verl_runtime_cli_writes_launch_files(tmp_path: Path) -> None:
@@ -108,3 +146,34 @@ def test_prepare_verl_runtime_cli_writes_launch_files(tmp_path: Path) -> None:
     assert exit_code == 0
     assert (tmp_path / "run_grpo" / "runtime_plan.json").exists()
     assert (tmp_path / "run_grpo" / "launch.sh").exists()
+
+
+def test_prepare_runtime_cli_writes_dpo_launch_files(tmp_path: Path) -> None:
+    dpo_corpus_path = _write_dpo_corpus(tmp_path / "train.phase_b_dpo.jsonl")
+    matrix = load_experiment_matrix(Path("configs/experiment_matrix.yaml"))
+    manifests = build_training_manifests(
+        matrix,
+        train_data_path=dpo_corpus_path,
+        output_dir=tmp_path / "bundle",
+    )
+    manifest = next(item for item in manifests if item.name == "phase_b_dpo")
+    manifest_dir = tmp_path / "bundle" / manifest.name
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    (manifest_dir / "manifest.json").write_text(
+        json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    exit_code = prepare_verl_runtime_main(
+        [
+            "--manifest-path",
+            str(manifest_dir / "manifest.json"),
+            "--run-dir",
+            str(tmp_path / "run_dpo"),
+        ]
+    )
+
+    assert exit_code == 0
+    assert (tmp_path / "run_dpo" / "runtime_plan.json").exists()
+    assert (tmp_path / "run_dpo" / "launch.sh").exists()
+    assert (tmp_path / "run_dpo" / "dpo_config.json").exists()

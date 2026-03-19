@@ -26,21 +26,34 @@ from veridoc_rl.training.runtime import (
     load_training_manifest,
     write_runtime_bundle,
 )
+from veridoc_rl.training.trl_dpo import (
+    TrlDPOConfig,
+    build_trl_dpo_rows,
+    execute_trl_dpo_training,
+    export_trl_dpo_dataset,
+    load_trl_dpo_config,
+    write_trl_dpo_config,
+)
 from veridoc_rl.training.verl_reward import compute_score
 
 __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
     "RuntimeLaunchPlan",
     "TrainingManifest",
+    "TrlDPOConfig",
     "build_assistant_response",
     "build_chat_messages",
     "build_runtime_launch_plan",
+    "build_trl_dpo_rows",
     "build_training_manifests",
     "build_user_prompt",
     "compute_score",
     "execute_runtime_plan",
+    "execute_trl_dpo_training",
     "export_training_jsonl",
+    "export_trl_dpo_dataset",
     "load_training_manifest",
+    "load_trl_dpo_config",
     "prepare_dpo_corpus",
     "prepare_rl_corpus",
     "prepare_sft_corpus",
@@ -48,4 +61,5 @@ __all__ = [
     "render_verl_manifest_yaml",
     "write_runtime_bundle",
     "write_training_bundle",
+    "write_trl_dpo_config",
 ]

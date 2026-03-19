@@ -8,9 +8,8 @@ from typing import Any
 
 from veridoc_rl.experiments import ExperimentMatrix, load_experiment_matrix
 
-
 DEFAULT_RUNTIME = {
-    "backend": "verl",
+    "backend": "multi",
     "prompt_template": "veridoc_v1",
     "phases": {
         "phase_b_dpo": {
@@ -18,6 +17,14 @@ DEFAULT_RUNTIME = {
             "reward_profile": "default",
             "epochs": 1,
             "learning_rate": 0.000001,
+            "beta": 0.1,
+            "per_device_train_batch_size": 2,
+            "gradient_accumulation_steps": 8,
+            "max_length": 3072,
+            "max_prompt_length": 2048,
+            "max_completion_length": 1024,
+            "logging_steps": 1,
+            "save_steps": 10,
         },
         "phase_c_grpo": {
             "algorithm": "grpo",
@@ -97,7 +104,10 @@ def build_training_manifests(
         reward_profile = str(phase_config.get("reward_profile", "default"))
         manifest_output_dir = output_dir / phase_name
         notes = [
-            "The same prompt template and verifier reward profile should be reused across train/eval/reporting.",
+            (
+                "The same prompt template and verifier reward profile should be reused "
+                "across train/eval/reporting."
+            ),
         ]
         manifests.append(
             TrainingManifest(
@@ -158,6 +168,7 @@ def render_verl_manifest_yaml(manifest: TrainingManifest) -> str:
 def render_manifest_markdown(manifest: TrainingManifest) -> str:
     trainer_items = [f"- `{key}`: {value}" for key, value in sorted(manifest.trainer.items())]
     note_items = [f"- {item}" for item in manifest.notes]
+    runtime_backend = manifest.runtime.get("backend_name")
     return "\n".join(
         [
             f"# {manifest.name}",
@@ -174,6 +185,7 @@ def render_manifest_markdown(manifest: TrainingManifest) -> str:
             *trainer_items,
             "",
             "## Runtime",
+            f"- `runtime_backend`: `{runtime_backend}`",
             f"- `supported`: {manifest.runtime.get('supported', False)}",
             f"- `entrypoint_module`: `{manifest.runtime.get('entrypoint_module')}`",
             f"- `dataset_format`: `{manifest.runtime.get('dataset_format')}`",
@@ -206,10 +218,22 @@ def write_training_bundle(output_dir: Path, manifests: list[TrainingManifest]) -
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Generate Phase B/Phase C verl-style training manifests.")
+    parser = argparse.ArgumentParser(
+        description="Generate Phase B/Phase C training manifests."
+    )
     parser.add_argument("--matrix-path", type=Path, default=Path("configs/experiment_matrix.yaml"))
-    parser.add_argument("--train-data-path", type=Path, required=True, help="Prepared DPO or RLVR training corpus path.")
-    parser.add_argument("--output-dir", type=Path, required=True, help="Output directory for the training bundle.")
+    parser.add_argument(
+        "--train-data-path",
+        type=Path,
+        required=True,
+        help="Prepared DPO or RLVR training corpus path.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="Output directory for the training bundle.",
+    )
     parser.add_argument("--eval-data-path", type=Path, help="Optional eval corpus path.")
     parser.add_argument("--base-model", help="Optional base model override.")
     return parser
@@ -246,9 +270,10 @@ def _build_runtime_descriptor(
     algorithm: str,
     common_runtime: dict[str, Any],
 ) -> dict[str, Any]:
-    if backend != "verl":
+    if backend not in {"multi", "trl", "verl"}:
         return {
             "supported": False,
+            "backend_name": None,
             "entrypoint_module": None,
             "dataset_format": None,
             "reward_function": None,
@@ -256,17 +281,17 @@ def _build_runtime_descriptor(
         }
     if phase_name == "phase_b_dpo":
         return {
-            "supported": False,
-            "entrypoint_module": None,
-            "dataset_format": None,
+            "supported": True,
+            "backend_name": "trl",
+            "entrypoint_module": "veridoc_rl.training.trl_dpo",
+            "dataset_format": "jsonl",
             "reward_function": None,
-            "reason": (
-                "The current runtime adapter only wires official verl PPO-style RL entrypoints. "
-                "Phase B DPO remains a corpus export stage until a separate DPO trainer backend is added."
-            ),
+            "launcher_defaults": dict(common_runtime),
+            "reason": "",
         }
     return {
         "supported": True,
+        "backend_name": "verl",
         "entrypoint_module": "verl.trainer.main_ppo",
         "dataset_format": "parquet",
         "reward_function": "veridoc_rl.training.verl_reward.compute_score",

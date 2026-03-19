@@ -7,12 +7,16 @@ from veridoc_rl.data.synthetic import SyntheticFormGenerator
 from veridoc_rl.experiments import load_experiment_matrix
 from veridoc_rl.training.corpus import (
     main as prepare_training_main,
+)
+from veridoc_rl.training.corpus import (
     prepare_dpo_corpus,
     prepare_rl_corpus,
     prepare_sft_corpus,
 )
 from veridoc_rl.training.manifests import (
     build_training_manifests,
+)
+from veridoc_rl.training.manifests import (
     main as generate_manifests_main,
 )
 from veridoc_rl.training.prompting import build_chat_messages, build_user_prompt
@@ -117,7 +121,8 @@ def test_generate_training_manifests_from_matrix() -> None:
         "phase_c_grpo",
         "phase_c_rloo",
     ]
-    assert manifests[0].backend == "verl"
+    assert manifests[0].backend == "multi"
+    assert manifests[0].runtime["backend_name"] == "trl"
     assert manifests[1].reward_profile == "rlvr"
 
 
