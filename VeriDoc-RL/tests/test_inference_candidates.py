@@ -107,3 +107,52 @@ def test_request_chat_candidates_rejects_unknown_backend() -> None:
         assert "Unsupported inference backend" in str(exc)
     else:
         raise AssertionError("Expected ValueError for unsupported backend.")
+
+
+def test_candidate_cli_expands_env_backed_model_and_api_base(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    input_path = tmp_path / "inputs.jsonl"
+    output_path = tmp_path / "candidates.jsonl"
+    input_path.write_text(json.dumps(_input_record(), ensure_ascii=False) + "\n", encoding="utf-8")
+    monkeypatch.setenv("VERIDOC_MODEL_PATH", str(tmp_path / "models" / "Qwen3-0.6B"))
+    monkeypatch.setenv("VERIDOC_API_BASE", "http://127.0.0.1:30000/v1")
+
+    seen: dict[str, str] = {}
+
+    def _fake_post_json(**kwargs):  # type: ignore[no-untyped-def]
+        seen["url"] = kwargs["url"]
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            '{"sample_id":"sample-1","fields":{"policyholder_name":"张三"},"validations":[]}'
+                        )
+                    }
+                }
+            ]
+        }
+
+    monkeypatch.setattr(candidates_module, "_post_json", _fake_post_json)
+
+    exit_code = candidates_module.main(
+        [
+            "--input-path",
+            str(input_path),
+            "--output-path",
+            str(output_path),
+            "--model",
+            "${VERIDOC_MODEL_PATH}",
+            "--api-base",
+            "${VERIDOC_API_BASE}",
+            "--num-candidates",
+            "1",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8").splitlines()[0])
+    assert payload["model"] == str(tmp_path / "models" / "Qwen3-0.6B")
+    assert seen["url"] == "http://127.0.0.1:30000/v1/chat/completions"

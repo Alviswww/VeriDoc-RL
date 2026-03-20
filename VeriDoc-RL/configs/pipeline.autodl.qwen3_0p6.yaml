@@ -1,0 +1,33 @@
+run:
+  name: "qwen3_0p6_autodl"
+  output_root: "${VERIDOC_OUTPUT_ROOT}"
+
+model:
+  baseline: "${VERIDOC_MODEL_PATH}"
+  inference_backend: "sglang"
+  inference_api_base: "${VERIDOC_API_BASE}"
+  inference_api_key: "EMPTY"
+
+data:
+  sft_gold_path: "${VERIDOC_SFT_GOLD_PATH}"
+  rl_prompt_only_path: "${VERIDOC_RL_PROMPT_ONLY_PATH}"
+
+generation:
+  candidate_count: 4
+  temperature: 0.8
+  top_p: 0.95
+  max_new_tokens: 1024
+
+pipeline:
+  enable_baseline_eval: true
+  enable_sft: true
+  enable_dpo: true
+  enable_rl: true
+  rl_algorithm: "grpo"
+
+execution:
+  prepare_only: false
+  execute_training: true
+  resume: true
+
+matrix_path: "configs/experiment_matrix.yaml"

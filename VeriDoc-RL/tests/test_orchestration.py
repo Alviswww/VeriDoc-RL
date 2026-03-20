@@ -43,6 +43,41 @@ def test_load_pipeline_spec_from_yaml(tmp_path: Path) -> None:
     assert spec.generation.candidate_count == 4
 
 
+def test_load_pipeline_spec_expands_env_vars(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("VERIDOC_OUTPUT_ROOT", str(tmp_path / "pipelines"))
+    monkeypatch.setenv("VERIDOC_MODEL_PATH", str(tmp_path / "models" / "Qwen3-0.6B"))
+    monkeypatch.setenv("VERIDOC_SFT_GOLD_PATH", str(tmp_path / "outputs" / "sft_gold.jsonl"))
+    monkeypatch.setenv(
+        "VERIDOC_RL_PROMPT_ONLY_PATH",
+        str(tmp_path / "outputs" / "rl_prompt_only.jsonl"),
+    )
+    monkeypatch.setenv("VERIDOC_API_BASE", "http://127.0.0.1:30000/v1")
+
+    spec_path = tmp_path / "pipeline.env.yaml"
+    spec_path.write_text(
+        "\n".join(
+            [
+                "run:",
+                '  name: "demo_run"',
+                '  output_root: "${VERIDOC_OUTPUT_ROOT}"',
+                "model:",
+                '  baseline: "${VERIDOC_MODEL_PATH}"',
+                '  inference_api_base: "${VERIDOC_API_BASE}"',
+                "data:",
+                '  sft_gold_path: "${VERIDOC_SFT_GOLD_PATH}"',
+                '  rl_prompt_only_path: "${VERIDOC_RL_PROMPT_ONLY_PATH}"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    spec = load_pipeline_spec(spec_path)
+
+    assert spec.run.output_root == str(tmp_path / "pipelines")
+    assert spec.model.baseline == str(tmp_path / "models" / "Qwen3-0.6B")
+    assert spec.data.sft_gold_path == str(tmp_path / "outputs" / "sft_gold.jsonl")
+
+
 def test_pipeline_state_roundtrip(tmp_path: Path) -> None:
     state_path = tmp_path / "state.json"
     state = PipelineState(run_name="demo")

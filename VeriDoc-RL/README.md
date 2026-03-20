@@ -1,999 +1,305 @@
 # VeriDoc-RL
 
-VeriDoc-RL 是一个面向制式投保单的 verifier-guided post-training 项目。它把 `OCR token 序列 -> 结构化字段抽取 -> 规则校验 -> verifier reward` 串成统一闭环，用同一套 schema、规则、verifier 和 reward 支持 `baseline / SFT / DPO / RLVR` 四类结果对比。
+VeriDoc-RL 是一个面向制式投保单结构化抽取的 verifier-guided post-training 项目。它把 `OCR token / 表单文本 -> 结构化字段抽取 -> 规则校验 -> verifier reward` 串成一条统一链路，用同一套 schema、规则、verifier 和 reward 支持 `baseline / SFT / DPO / RLVR` 对比。
 
-这份 README 是仓库的主接手文档。当前内容已经同步到仓库里真实存在的本地单机链路，包括：
+当前仓库的默认运行路线已经切到 **云端单机 GPU**，优先面向 **AutoDL** 这类租赁平台，而不是继续围绕本地 WSL 老卡调环境。
 
-- `models/Qwen3-0.6B` 默认基座
-- `SGLang` candidate generation
-- `phase_a_sft` 本地 SFT runtime
-- `phase_b_dpo` 本地 DPO runtime
-- `phase_c_grpo / phase_c_rloo` 的 `verl` runtime bridge
-- `run_pipeline.py` 本地训练编排层 v1
+当前主链路的推理后端也固定收敛到 **SGLang**：
 
-对你这类 `RTX 2060 6GB / SM75` 机器，当前默认版本岛已经专门收敛到：
+- baseline 多候选采样走 `SGLang`
+- `phase_c_*` rollout 走 `verl + SGLang`
+- `vLLM` 只保留为后续吞吐对比的可选路径，不再是默认前置条件
 
-- `torch 2.6.0`
-- `sglang 0.4.6.post5`
-- `verl 0.4.1`
-- 默认训练精度 `float16`
+## 1. 当前默认主线
 
-也就是说，仓库当前不再默认追最新的 `SGLang / verl / torch` 组合，而是优先保证老卡本地能跑通。
+当前主线固定为：
 
-## 1. 当前主线
+1. baseline：`models/Qwen3-0.6B`
+2. `phase_a_sft`：在 baseline 上做 SFT
+3. `phase_b_dpo`：在 `phase_a_sft` checkpoint 上做 DPO
+4. `phase_c_grpo` 或 `phase_c_rloo`：在 `phase_a_sft` checkpoint 上做 RLVR
+5. 对比 `baseline / sft / dpo / rlvr`
 
-当前默认实验主线固定为：
-
-1. `models/Qwen3-0.6B` 作为 baseline
-2. 在 baseline 上做 `phase_a_sft`
-3. 在 `phase_a_sft` checkpoint 上做 `phase_b_dpo`
-4. 在 `phase_a_sft` checkpoint 上做 `phase_c_grpo` 或 `phase_c_rloo`
-5. 对比 `baseline / sft / dpo / rlvr` 四类结果
-
-这里有两个刻意固定的约束：
+这里保留两个刻意固定的约束：
 
 - `DPO` 默认接 `SFT checkpoint`
 - `RLVR` 默认也接 `SFT checkpoint`
 
-这样做的原因很简单：
-
-- 小模型在没有 SFT 预热时，结构化 JSON 输出通常不够稳定
-- 如果把 RL 默认串到 DPO 后面，会把“偏好优化收益”和“verifier reward 收益”混在一起
+这样可以把 “先让模型稳定输出 JSON” 和 “偏好优化 / verifier reward 优化” 分开。
 
 ## 2. 框架边界
 
-这是当前项目最容易混淆的一点，先直接说清楚：
-
 | 环节 | 当前框架 | 说明 |
 | --- | --- | --- |
-| baseline candidate 生成 | `SGLang` | 通过 OpenAI-compatible API 提供多候选采样，`vLLM` 仅保留为可选对比路径 |
-| 训练后 checkpoint 回评推理 | `transformers` + `peft` | `scripts/run_inference.py` 直接加载本地模型或 checkpoint |
-| `phase_a_sft` | `transformers.Trainer` + `datasets` + `peft` | 入口是 `src/veridoc_rl/training/trl_sft.py`，文件名历史上叫 `trl_sft.py`，但实际不是 `TRL SFTTrainer` |
-| `phase_b_dpo` | `TRL DPOTrainer` + `transformers` + `datasets` + `peft` | 入口是 `src/veridoc_rl/training/trl_dpo.py` |
-| `phase_c_grpo / phase_c_rloo` | `verl.trainer.main_ppo` | 通过 `src/veridoc_rl/training/verl_reward.py` 接 verifier reward |
+| baseline candidate generation | `SGLang` | 通过 OpenAI-compatible API 生成多候选 |
+| checkpoint 回评推理 | `transformers` + `peft` | `scripts/run_inference.py` 直接加载本地模型或 checkpoint |
+| `phase_a_sft` | `transformers.Trainer` + `datasets` + `peft` | 实现在 `src/veridoc_rl/training/trl_sft.py` |
+| `phase_b_dpo` | `TRL DPOTrainer` | 实现在 `src/veridoc_rl/training/trl_dpo.py` |
+| `phase_c_grpo / phase_c_rloo` | `verl` | 通过 `src/veridoc_rl/training/verl_reward.py` 接 verifier reward |
 
 结论：
 
-- baseline 候选推理默认走 `SGLang`
-- SFT 训练框架不是 `vLLM`
-- 当前 SFT 训练框架是仓库内的 `transformers.Trainer + datasets + peft` 运行器
-- DPO 训练框架是 `TRL`
-- RL 训练框架是 `verl`
-- 当前不使用独立 reward model，RL 仍默认使用 verifier-based reward
+- baseline 默认走 `SGLang`
+- SFT 和 checkpoint inference 默认走本地 `transformers`
+- DPO 默认走 `TRL`
+- RL 默认走 `verl`
+- 当前不需要独立 reward model
 
-## 3. 当前实现状态
+## 3. 为什么默认切到云端
 
-### 已经接通
+本项目当前的主要环境冲突点，不是代码逻辑，而是训练栈和服务栈的 Python 依赖组合：
 
-- 统一 schema
-- synthetic 样本生成
-- verifier suite
-- reward profile / ablation
-- Phase A 单报告评测
-- 多报告对比
-- experiment matrix
-- `SGLang` candidate generation
-- Phase A / B / C 训练语料准备
-- Phase A / B / C manifest 生成
-- Phase A / B / C runtime bundle 生成
-- 本地 checkpoint inference
-- 本地 orchestration pipeline
+- `sglang[srt]` 更适合作为单独的 serving / RL 环境
+- `trl + transformers + peft` 更适合作为单独的训练环境
+- 把它们强行塞进一个 `.venv`，在本地老卡上调试成本很高
 
-### 仍然没有做的部分
+所以仓库现在默认采用 **双环境**：
 
-- 分布式训练调度
-- 多机日志聚合
-- 独立 reward model 训练与 serving
-- 自动 best-checkpoint 选择
-- 更完整的远程执行器
-
-也就是说，仓库现在已经能在单机上把数据准备、训练入口、checkpoint 衔接、回评和对比串起来；真正没做的是更重型的训练平台能力。
-
-## 4. 为什么默认切到 Qwen3-0.6B
-
-当前默认组合是：
-
-- 模型：`models/Qwen3-0.6B`
-- 推理：`SGLang`
-- SFT / DPO 适配：`QLoRA`
-- 训练精度：`float16`
-
-这样选的原因：
-
-- `0.6B` 更适合本地单卡做 smoke 和小规模实验
-- 仓库里已经放了 `models/Qwen3-0.6B`，默认配置不再依赖首次联网拉取 baseline
-- `SGLang` 让 baseline candidate generation 和 RL rollout 都能收敛到同一套本地 CUDA 环境
-- `QLoRA` 能把 `SFT / DPO` 的显存门槛压低
-- `float16` 比 `bfloat16` 更适合 `RTX 2060 6GB` 这类较老的消费级 GPU
-- `torch 2.6.0 + sglang 0.4.6.post5 + verl 0.4.1` 比当前更高版本组合更适合 `SM75`
-- 同一套模型既能做 baseline，也能继续做 SFT / DPO / RL 对比
-
-## 5. 路径说明
-
-仓库有两层根目录：
-
-- git 根目录：`/home/alvis/projects/llm-study/VeriDoc-RL`
-- Python 项目根目录：`/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL`
-
-下面 README 里的所有命令都默认在内层项目根目录执行：
-
-```bash
-cd /home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL
-```
-
-## 6. Windows + WSL 的推荐运行方式
-
-如果你准备用 Windows 机器启动这个项目，当前最稳妥的方式不是在 PowerShell 里直接跑，而是：
-
-1. Windows 装好 NVIDIA 驱动
-2. 在 Windows 上启用 WSL2
-3. 在 WSL 里完成 Python 环境、依赖安装、训练与推理
-4. 把 GPU 通过 WSL 的 CUDA bridge 暴露给 Linux 用户态
-
-### 6.1 建议直接在 WSL 内运行
-
-当前仓库的脚本、路径和 `launch.sh` 都是按 Linux 运行方式写的，所以建议：
-
-- 不要在 PowerShell 里直接跑仓库脚本
-- 统一进入 WSL shell 后执行
-- 所有模型下载、训练和推理都放在 WSL 环境里
-
-### 6.2 Python 版本建议
-
-当前仓库 `pyproject.toml` 要求：
-
-```text
-requires-python = ">=3.12"
-```
-
-同时，当前你的这台 WSL 会话默认 `python3` 是 `3.14.3`，而系统 Python 里可见的是 `3.10.12`。这两个都不适合作为本项目的最终运行环境：
-
-- `3.10` 低于仓库当前要求
-- `3.14` 对很多训练栈和推理栈兼容性不稳
-
-推荐直接在 WSL 里新建一个 **Python 3.12** 环境。
-
-最推荐的目标版本：
-
-- `Python 3.12`
-
-### 6.3 WSL 环境的最小检查
-
-在开始之前，先在 WSL 里检查：
-
-```bash
-uname -a
-nvidia-smi
-python3 --version
-```
-
-你当前这台会话里，`nvidia-smi` 返回的是：
-
-```text
-Failed to initialize NVML: GPU access blocked by the operating system
-```
-
-这说明当前会话无法直接证明 GPU 已经被 WSL 正常拿到，所以你在正式开跑前，应该先让下面这条命令在 WSL 里正常返回显卡信息：
-
-```bash
-nvidia-smi
-```
-
-如果这一步不通，不要继续安装 `torch / sglang / bitsandbytes / verl`。
-
-### 6.4 WSL 里的推荐环境准备
-
-当前默认主路径只需要一个 Python 3.12 虚拟环境：
-
+- `.venv-train`
+  - 用于开发、测试、SFT、DPO、checkpoint inference
 - `.venv-rl`
-  - 负责仓库开发、测试、`prepare-only`、SFT、DPO、RL
-  - baseline candidate generation 默认也通过这个环境对接本地 `SGLang`
-  - 当前默认 RL rollout backend 仍然是 `sglang`
+  - 用于 `SGLang` 启动与 `verl` rollout
 
-如果你后续确实想做 `vLLM` 对比，再额外准备 `.venv-vllm`，但它不再是主链路的前置条件。
+这不代表上云后就完全没有依赖冲突，只是把问题从“本地老卡很难调”变成了“云端更容易维护兼容岛”：
 
-### 6.5 先把 CUDA 用户态版本收敛到 12.6 或 12.4
+- 训练栈和 serving / rollout 栈仍然要分开
+- `torch / sglang / verl / flashinfer` 仍然要一起 pin
+- 但 AutoDL 至少能先把 GPU、CUDA 和磁盘布局稳定下来
 
-这一点现在要单独强调，因为它直接影响 `flashinfer / sglang / vllm` 的组合稳定性。
+## 4. AutoDL 目录约定
 
-建议顺序：
+推荐把代码和模型、输出目录分开：
 
-1. 先确认 Windows 驱动正常，`nvidia-smi` 能在 WSL 内返回 GPU 信息
-2. 再把 `/usr/local/cuda` 切到 **CUDA 12.6.x** 或 **CUDA 12.4.x**
-3. 最后再重建主环境 `.venv-rl`
+- 持久化代码与模型：`/root/autodl-fs`
+- 高 IO 输出与中间产物：`/root/autodl-tmp`
 
-不要反过来做。先装 Python 依赖、后切 CUDA，经常会把 `flashinfer`、JIT 扩展或其它二进制依赖搞成混装状态。
-
-当前这台仓库机器上观察到的用户态 CUDA 是：
-
-```text
-/usr/local/cuda -> /usr/local/cuda-13.2
-```
-
-如果你的机器也是这种状态，不要继续沿用旧 `.venv`，先把 CUDA toolkit 收敛到 `12.6.x` 或 `12.4.x`。
-
-## 7. 依赖分层
-
-### 7.1 仓库基础依赖
-
-只做开发、测试和评测：
+仓库已经附带 AutoDL 环境变量模板：
 
 ```bash
-pip install -e .[dev]
+source configs/autodl.env.example
 ```
 
-如果要执行 SFT / DPO：
+你通常会按下面这种方式调整：
 
 ```bash
-pip install -e .[dev,train]
+export VERIDOC_PROJECT_ROOT="/root/autodl-fs/code/VeriDoc-RL/VeriDoc-RL"
+export VERIDOC_WORK_ROOT="/root/autodl-tmp/veridoc-rl"
+export VERIDOC_MODEL_PATH="${VERIDOC_PROJECT_ROOT}/models/Qwen3-0.6B"
+export VERIDOC_TRAIN_PYTHON_BIN="${VERIDOC_PROJECT_ROOT}/.venv-train/bin/python"
+export VERIDOC_RL_PYTHON_BIN="${VERIDOC_PROJECT_ROOT}/.venv-rl/bin/python"
+export VERIDOC_OUTPUT_ROOT="${VERIDOC_WORK_ROOT}/pipelines"
+export VERIDOC_SFT_GOLD_PATH="${VERIDOC_WORK_ROOT}/outputs/sft_gold.jsonl"
+export VERIDOC_RL_PROMPT_ONLY_PATH="${VERIDOC_WORK_ROOT}/outputs/rl_prompt_only.jsonl"
+export VERIDOC_API_BASE="http://127.0.0.1:30000/v1"
 ```
 
-当前 `train` extra 会带来：
+新增的 [pipeline.autodl.qwen3_0p6.yaml](/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL/configs/pipeline.autodl.qwen3_0p6.yaml) 会自动读取这些环境变量。
 
-- `accelerate`
-- `bitsandbytes`
-- `datasets`
-- `peft`
-- `transformers`
-- `trl`
+## 5. 快速开始
 
-对于 `RTX 2060 6GB` 这类不适合 `bfloat16` 的老卡，当前仓库默认训练精度已经收敛到 `float16`。
+### 5.1 准备实例
 
-### 7.2 还需要你自己补的依赖
+建议直接选 Ubuntu 容器实例，并确保：
 
-仓库的 `train` extra 还**不包含**下面这些运行时组件：
+- GPU 在容器内可见
+- `nvidia-smi` 正常
+- Python 3.12 可用
 
-- 与你本机 CUDA 匹配的 `torch`
-- baseline / rollout 用的 `sglang`
-- RL 用的 `pyarrow`
-- RL 用的 `verl`
+如果镜像里没有 `python3.12`，先在实例内准备一个 Python 3.12。
 
-当前默认按单环境安装：
-
-1. `.venv-rl` 安装 `torch + .[dev,train] + pyarrow + verl + sglang`
-2. 只有你明确要保留 `vLLM` 对比实验时，才额外准备 `.venv-vllm`
-
-当前仓库里已经附了一个重建脚本：
+### 5.2 克隆仓库
 
 ```bash
-bash scripts/rebuild_wsl_envs.sh cu126
+mkdir -p /root/autodl-fs/code
+cd /root/autodl-fs/code
+git clone <your-repo-url> VeriDoc-RL
+cd VeriDoc-RL/VeriDoc-RL
 ```
 
-或者：
+### 5.3 重建环境
+
+默认入口改为：
 
 ```bash
-bash scripts/rebuild_wsl_envs.sh cu124
+bash scripts/bootstrap_autodl_envs.sh auto
 ```
 
-这个脚本会先检查 `/usr/local/cuda` 是否已经是目标大版本，然后默认只重建主环境：
-
-- `.venv-rl`: `torch 2.6.0` + `verl 0.4.1` + `sglang 0.4.6.post5`
-
-如果你显式传 `--with-vllm`，脚本才会额外重建 `.venv-vllm`，并按源码构建 `vllm 0.17.1`。
-
-如果你想手工安装，顺序如下：
+如果你已经激活了自己的 Python 3.12 环境，也可以：
 
 ```bash
-bash scripts/rebuild_wsl_envs.sh cu126
+PYTHON_BIN=python bash scripts/bootstrap_autodl_envs.sh auto
 ```
 
-注意：
+这个脚本会：
 
-- `cu126` 和 `cu124` 二选一，前提是 `/usr/local/cuda` 已经切到对应大版本
-- 对 `RTX 2060 / SM75`，当前第一选择是保留 `cu126` 或 `cu124`，不要先急着退回 `cu118`
-- 主路径现在不依赖 `uv`
-- 主路径里的 `SGLang` 会通过 FlashInfer 的 `torch2.6` wheel 源安装依赖
-- 对 `SM75` 卡，`SGLang` 启动时优先带 `--attention-backend triton --sampling-backend pytorch`
-- `vLLM` 的预编译 wheel 会自带它自己的 `torch` 依赖组合；如果你必须保留指定的 `torch + cu126/cu124`，就不要直接 `pip install vllm`
-- 只有启用 `--with-vllm` 时，脚本才要求本机可用 `uv`
-- 如果 vLLM 源码编译报 `Killed` 或退出码 `137`，优先检查 WSL 的 `memory` / `swap`；像 `8 GiB RAM + 2 GiB swap` 这类配置通常不够
-- `vLLM` 和 `verl` 默认不要再强行装到同一个 `.venv`
-- 如果 `cu126/cu124 + torch2.6 + sglang0.4.6.post5` 这条线仍然起不来，再把 `cu118` 作为最后一级 fallback；那时再同步切 CUDA toolkit
-- 如果你只做 `prepare-only`，也建议直接在 `.venv-rl` 里完成
+- 自动检测 `cu126` 或 `cu124`
+- 重建 `.venv-train`
+- 重建 `.venv-rl`
+- 把训练依赖和 `sglang/verl` 依赖拆开
 
-## 8. baseline 模型现在怎么处理
-
-默认 baseline 已经切到仓库内的本地路径：
-
-```text
-models/Qwen3-0.6B
-```
-
-这意味着：
-
-- 默认配置不需要再从 Hugging Face 首次拉取 baseline
-- `sglang.launch_server` 和 `transformers.from_pretrained(...)` 都会直接读取本地目录
-- 如果你要切回 Hugging Face 模型名，可以把 `models/Qwen3-0.6B` 换成 `Qwen/Qwen3-0.6B`
-
-也就是说：
-
-- 当前仓库默认就已经是“本地模型路径”模式
-- 只有你显式改回 Hugging Face repo id 时，才会发生按需下载
-
-## 9. `models/Qwen3-0.6B` 的实际启动方式
-
-当前项目里有三种和模型有关的运行方式，它们服务不同用途。
-
-### 9.1 方式一：给 candidate generation 用的 SGLang 服务
-
-这条线用于：
-
-- baseline 多候选采样
-- preference 数据构造前的 candidate 生成
-
-最小启动命令：
+### 5.4 准备工作目录
 
 ```bash
-python -m sglang.launch_server \
-  --model-path models/Qwen3-0.6B \
-  --host 127.0.0.1 \
-  --port 30000 \
-  --attention-backend triton \
-  --sampling-backend pytorch
+mkdir -p /root/autodl-tmp/veridoc-rl/outputs
+mkdir -p /root/autodl-tmp/veridoc-rl/pipelines
+source configs/autodl.env.example
 ```
 
-然后本仓库的 candidate 脚本默认连：
+根据你的实际仓库路径，先改好 [autodl.env.example](/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL/configs/autodl.env.example) 再 `source`。
 
-```text
-http://127.0.0.1:30000/v1
+### 5.5 验证两套环境
+
+```bash
+source .venv-train/bin/activate
+python -c "import torch, transformers, trl; print(torch.cuda.is_available(), torch.__version__, transformers.__version__, trl.__version__)"
+
+source .venv-rl/bin/activate
+python -c "import torch, pyarrow, verl, sglang, fastapi, uvicorn; print(torch.cuda.is_available(), torch.__version__, verl.__version__, sglang.__version__, uvicorn.__version__)"
 ```
 
-可先用下面命令快速检查服务：
+## 6. 第一次跑通项目的推荐顺序
+
+### 6.1 先跑测试
+
+```bash
+source .venv-train/bin/activate
+pytest
+veridoc-rl-smoke
+```
+
+### 6.2 生成数据
+
+```bash
+source .venv-train/bin/activate
+
+python scripts/generate_sft_dataset.py \
+  --count 200 \
+  --seed 7 \
+  --task-type SFT_gold \
+  --output-path "${VERIDOC_SFT_GOLD_PATH}"
+
+python scripts/generate_sft_dataset.py \
+  --count 200 \
+  --seed 11 \
+  --task-type RL_prompt_only \
+  --output-path "${VERIDOC_RL_PROMPT_ONLY_PATH}"
+```
+
+### 6.3 启动 SGLang
+
+```bash
+bash scripts/start_sglang_server.sh
+```
+
+脚本现在会优先读取 `VERIDOC_MODEL_PATH`。如果你想临时覆盖，传 `MODEL_PATH` 即可：
+
+```bash
+MODEL_PATH="/root/autodl-fs/models/Qwen3-0.6B" bash scripts/start_sglang_server.sh
+```
+
+如果你需要额外参数，可以直接追加到脚本后面：
+
+```bash
+bash scripts/start_sglang_server.sh --trust-remote-code
+```
+
+另开一个终端验证：
 
 ```bash
 curl http://127.0.0.1:30000/v1/models
 ```
 
-如果这一步能返回模型列表，你的 baseline candidate 服务就起来了。
-
-如果你后续还想对比 `vLLM` 吞吐，可以把同一套 OpenAI-compatible API 切回 `vLLM`，但这不是默认路径。
-
-### 9.2 方式二：给 SFT / DPO / checkpoint 回评用的本地 transformers 加载
-
-这条线用于：
-
-- `phase_a_sft`
-- `phase_b_dpo`
-- 训练后 checkpoint 推理回评
-
-它不会起一个 API 服务，而是直接在 Python 进程里加载：
-
-- `AutoTokenizer.from_pretrained(...)`
-- `AutoModelForCausalLM.from_pretrained(...)`
-- 如果是 PEFT adapter checkpoint，则走 `AutoPeftModelForCausalLM.from_pretrained(...)`
-
-也就是说：
-
-- `SGLang` 默认只负责 baseline 候选生成
-- SFT / DPO / checkpoint 推理都不是通过外部推理服务完成的
-
-### 9.3 方式三：给 RL rollout 用的 `verl + sglang`
-
-- `phase_c_grpo / phase_c_rloo` 仍然由 `verl.trainer.main_ppo` 驱动
-- 当前仓库默认 rollout backend 已调整为 `sglang`
-- 这部分运行在 `.venv-rl`，不依赖你手工启动的 `vLLM serve`
-
-## 10. 数据契约
-
-### 10.1 输入样本
-
-每条输入样本的核心结构：
-
-```json
-{
-  "sample_id": "template_a_00001",
-  "form_type": "insurance_application_form",
-  "pdf_page": 1,
-  "ocr_tokens": [
-    {
-      "text": "投保人姓名",
-      "bbox": [10, 20, 60, 40],
-      "page": 1
-    }
-  ]
-}
-```
-
-### 10.2 输出样本
-
-模型必须输出：
-
-```json
-{
-  "sample_id": "template_a_00001",
-  "fields": {
-    "policyholder_name": "张三"
-  },
-  "validations": [
-    {
-      "rule_id": "required.policyholder_name",
-      "status": "pass",
-      "message": "policyholder_name is present"
-    }
-  ]
-}
-```
-
-### 10.3 上游数据类型
-
-仓库当前支持四类上游 JSONL：
-
-- `SFT_gold`
-- `SFT_silver`
-- `RL_prompt_only`
-- `DPO_preference`
-
-### 10.4 下游训练语料
-
-`src/veridoc_rl/training/corpus.py` 会把上游数据转成三类训练语料：
-
-- `phase_a_sft`
-  - `messages = [system, user, assistant]`
-- `phase_b_dpo`
-  - `system_prompt + prompt + chosen + rejected`
-- `phase_c_rlvr`
-  - `system_prompt + prompt + reward_profile + metadata`
-
-### 10.5 candidate.jsonl 契约
-
-`scripts/generate_candidates.py` 导出的记录核心长这样：
-
-```json
-{
-  "candidate_id": "template_a_00000::cand_0",
-  "sample_id": "template_a_00000",
-  "backend": "sglang",
-  "model": "models/Qwen3-0.6B",
-  "generation_config": {
-    "temperature": 0.8,
-    "top_p": 0.95,
-    "max_new_tokens": 1024,
-    "num_candidates": 4
-  },
-  "prediction": {
-    "sample_id": "template_a_00000",
-    "fields": {},
-    "validations": []
-  },
-  "raw_text": "{...}"
-}
-```
-
-其中 `generate_preference_dataset.py` 真正依赖的核心字段只有：
-
-- `candidate_id`
-- `prediction.sample_id`
-- `prediction.fields`
-- `prediction.validations`
-
-## 11. 常用命令
-
-### 11.1 跑测试
+### 6.4 生成 candidates
 
 ```bash
-pytest
-```
+source .venv-train/bin/activate
 
-### 11.2 跑最小 smoke
-
-```bash
-veridoc-rl-smoke
-```
-
-### 11.3 生成 synthetic 数据
-
-生成 `SFT_gold`：
-
-```bash
-python scripts/generate_sft_dataset.py \
-  --count 200 \
-  --seed 7 \
-  --task-type SFT_gold \
-  --output-path outputs/sft_gold.jsonl
-```
-
-生成 `RL_prompt_only`：
-
-```bash
-python scripts/generate_sft_dataset.py \
-  --count 200 \
-  --seed 11 \
-  --task-type RL_prompt_only \
-  --output-path outputs/rl_prompt_only.jsonl
-```
-
-### 11.4 启动 SGLang
-
-```bash
-python -m sglang.launch_server \
-  --model-path models/Qwen3-0.6B \
-  --host 127.0.0.1 \
-  --port 30000 \
-  --attention-backend triton \
-  --sampling-backend pytorch
-```
-
-### 11.5 生成 baseline candidates
-
-```bash
 python scripts/generate_candidates.py \
-  --input-path outputs/sft_gold.jsonl \
-  --output-path outputs/candidates.jsonl \
-  --model models/Qwen3-0.6B \
-  --api-base http://127.0.0.1:30000/v1 \
+  --input-path "${VERIDOC_SFT_GOLD_PATH}" \
+  --output-path "${VERIDOC_WORK_ROOT}/outputs/candidates.jsonl" \
+  --model "${VERIDOC_MODEL_PATH}" \
+  --api-base "${VERIDOC_API_BASE}" \
   --num-candidates 4 \
   --temperature 0.8 \
   --top-p 0.95 \
   --max-new-tokens 1024
 ```
 
-### 11.6 构造 DPO preference
+### 6.5 生成 preferences
 
 ```bash
+source .venv-train/bin/activate
+
 python scripts/generate_preference_dataset.py \
-  --reference-path outputs/sft_gold.jsonl \
-  --candidate-path outputs/candidates.jsonl \
-  --output-path outputs/preferences.jsonl \
+  --reference-path "${VERIDOC_SFT_GOLD_PATH}" \
+  --candidate-path "${VERIDOC_WORK_ROOT}/outputs/candidates.jsonl" \
+  --output-path "${VERIDOC_WORK_ROOT}/outputs/preferences.jsonl" \
   --min-margin 0.05
 ```
 
-### 11.7 导出训练语料
+### 6.6 跑 pipeline
 
-Phase A：
+仓库默认保留一个相对路径配置：
 
-```bash
-python scripts/prepare_training_data.py \
-  --input-path outputs/sft_gold.jsonl \
-  --output-path outputs/train.phase_a_sft.jsonl \
-  --stage phase_a_sft
-```
+- [pipeline.qwen3_0p6.yaml](/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL/configs/pipeline.qwen3_0p6.yaml)
 
-Phase B：
+云端默认新增一个 AutoDL 配置：
 
-```bash
-python scripts/prepare_training_data.py \
-  --input-path outputs/preferences.jsonl \
-  --output-path outputs/train.phase_b_dpo.jsonl \
-  --stage phase_b_dpo
-```
+- [pipeline.autodl.qwen3_0p6.yaml](/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL/configs/pipeline.autodl.qwen3_0p6.yaml)
 
-Phase C：
+先做 prepare-only：
 
 ```bash
-python scripts/prepare_training_data.py \
-  --input-path outputs/rl_prompt_only.jsonl \
-  --output-path outputs/train.phase_c_rlvr.jsonl \
-  --stage phase_c_rlvr \
-  --reward-profile rlvr
-```
-
-### 11.8 生成 manifest bundle
-
-```bash
-python scripts/generate_training_manifests.py \
-  --matrix-path configs/experiment_matrix.yaml \
-  --phase-a-train-data-path outputs/train.phase_a_sft.jsonl \
-  --phase-b-train-data-path outputs/train.phase_b_dpo.jsonl \
-  --phase-c-train-data-path outputs/train.phase_c_rlvr.jsonl \
-  --output-dir outputs/training_bundle \
-  --phase-a-base-model models/Qwen3-0.6B \
-  --phase-b-base-model outputs/runtime_runs/phase_a_sft/checkpoints \
-  --phase-c-base-model outputs/runtime_runs/phase_a_sft/checkpoints
-```
-
-### 11.9 生成 runtime bundle
-
-SFT：
-
-```bash
-python scripts/prepare_training_runtime.py \
-  --manifest-path outputs/training_bundle/phase_a_sft/manifest.json \
-  --run-dir outputs/runtime_runs/phase_a_sft
-```
-
-DPO：
-
-```bash
-python scripts/prepare_training_runtime.py \
-  --manifest-path outputs/training_bundle/phase_b_dpo/manifest.json \
-  --run-dir outputs/runtime_runs/phase_b_dpo
-```
-
-RL：
-
-```bash
-python scripts/prepare_training_runtime.py \
-  --manifest-path outputs/training_bundle/phase_c_grpo/manifest.json \
-  --run-dir outputs/runtime_runs/phase_c_grpo \
-  --materialize-data
-```
-
-### 11.10 真正执行训练
-
-SFT：
-
-```bash
-python scripts/prepare_training_runtime.py \
-  --manifest-path outputs/training_bundle/phase_a_sft/manifest.json \
-  --run-dir outputs/runtime_runs/phase_a_sft \
-  --execute
-```
-
-DPO：
-
-```bash
-python scripts/prepare_training_runtime.py \
-  --manifest-path outputs/training_bundle/phase_b_dpo/manifest.json \
-  --run-dir outputs/runtime_runs/phase_b_dpo \
-  --execute
-```
-
-RL：
-
-```bash
-python scripts/prepare_training_runtime.py \
-  --manifest-path outputs/training_bundle/phase_c_grpo/manifest.json \
-  --run-dir outputs/runtime_runs/phase_c_grpo \
-  --materialize-data \
-  --execute
-```
-
-### 11.11 checkpoint 推理回评
-
-```bash
-python scripts/run_inference.py \
-  --input-path outputs/sft_gold.jsonl \
-  --output-path outputs/predictions.sft.jsonl \
-  --model-name-or-path outputs/runtime_runs/phase_a_sft/checkpoints
-```
-
-### 11.12 跑评测
-
-```bash
-python scripts/run_phase_a_eval.py \
-  --reference-path outputs/sft_gold.jsonl \
-  --prediction-path outputs/predictions.sft.jsonl \
-  --report-path outputs/report.sft.json \
-  --case-export-path outputs/cases.sft.jsonl
-```
-
-### 11.13 对比报告
-
-```bash
-python scripts/compare_phase_reports.py \
-  --report baseline=outputs/report.baseline.json \
-  --report sft=outputs/report.sft.json \
-  --report dpo=outputs/report.dpo.json \
-  --report rlvr=outputs/report.rlvr.json \
-  --output-dir outputs/report_compare
-```
-
-## 12. 本地训练编排层 v1
-
-如果你不想手工一个阶段一个阶段串命令，可以直接用：
-
-```bash
+source .venv-train/bin/activate
 python scripts/run_pipeline.py \
-  --spec-path configs/pipeline.qwen3_0p6.yaml
-```
-
-这个入口会串起：
-
-- baseline candidate generation
-- baseline eval
-- `phase_a_sft`
-- `phase_b_dpo`
-- `phase_c_grpo` 或 `phase_c_rloo`
-- `state.json`
-- `summary.json`
-
-### 12.1 pipeline spec
-
-默认 spec 在：
-
-```text
-configs/pipeline.qwen3_0p6.yaml
-```
-
-关键字段：
-
-```yaml
-run:
-  name: "qwen3_0p6_mainline"
-  output_root: "outputs/pipelines"
-
-model:
-  baseline: "models/Qwen3-0.6B"
-  inference_backend: "sglang"
-  inference_api_base: "http://127.0.0.1:30000/v1"
-
-data:
-  sft_gold_path: "outputs/sft_gold.jsonl"
-  rl_prompt_only_path: "outputs/rl_prompt_only.jsonl"
-
-pipeline:
-  enable_baseline_eval: true
-  enable_sft: true
-  enable_dpo: true
-  enable_rl: true
-  rl_algorithm: "grpo"
-
-execution:
-  prepare_only: false
-  execute_training: true
-  resume: true
-```
-
-### 12.2 prepare-only 模式
-
-如果你想先只验证数据、manifest 和 runtime bundle，不真正训练：
-
-```bash
-python scripts/run_pipeline.py \
-  --spec-path configs/pipeline.qwen3_0p6.yaml \
+  --spec-path configs/pipeline.autodl.qwen3_0p6.yaml \
   --prepare-only
 ```
 
-### 12.3 no-resume 模式
-
-如果你想无视已有状态重跑：
+再正式执行：
 
 ```bash
+source .venv-train/bin/activate
 python scripts/run_pipeline.py \
-  --spec-path configs/pipeline.qwen3_0p6.yaml \
-  --no-resume
+  --spec-path configs/pipeline.autodl.qwen3_0p6.yaml
 ```
 
-### 12.4 pipeline 输出目录
+现在整条 pipeline 可以从 `.venv-train` 发起：
 
-默认会写到：
+- `phase_a_sft / phase_b_dpo` 默认走 `VERIDOC_TRAIN_PYTHON_BIN`
+- `phase_c_grpo / phase_c_rloo` 默认自动切到 `VERIDOC_RL_PYTHON_BIN`
 
-```text
-outputs/pipelines/qwen3_0p6_mainline/
-```
+## 7. 当前仓库里和云端相关的改动
 
-结构大致如下：
+这次改造新增了：
 
-```text
-outputs/pipelines/qwen3_0p6_mainline/
-  spec.snapshot.json
-  state.json
-  summary.json
-  comparison/
-  baseline/
-    candidates.jsonl
-    predictions.jsonl
-    report.json
-    cases.jsonl
-  phase_a_sft/
-    train.jsonl
-    manifest.json
-    runtime_plan.json
-    launch.sh
-    checkpoints/
-    predictions.jsonl
-    report.json
-    cases.jsonl
-  phase_b_dpo/
-    preferences.jsonl
-    train.jsonl
-    manifest.json
-    runtime_plan.json
-    launch.sh
-    checkpoints/
-    predictions.jsonl
-    report.json
-    cases.jsonl
-  phase_c_grpo/
-    train.jsonl
-    manifest.json
-    runtime_plan.json
-    launch.sh
-    checkpoints/
-    predictions.jsonl
-    report.json
-    cases.jsonl
-```
+- [bootstrap_autodl_envs.sh](/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL/scripts/bootstrap_autodl_envs.sh)
+  - AutoDL 双环境重建脚本
+- [start_sglang_server.sh](/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL/scripts/start_sglang_server.sh)
+  - 用 `.venv-rl` 启动 `SGLang`
+- [autodl.env.example](/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL/configs/autodl.env.example)
+  - AutoDL 环境变量模板
+- [pipeline.autodl.qwen3_0p6.yaml](/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL/configs/pipeline.autodl.qwen3_0p6.yaml)
+  - AutoDL pipeline spec
 
-### 12.5 编排层里已经固定好的依赖关系
+同时，pipeline spec 和 training manifest 现在支持环境变量展开，所以你可以在 YAML / JSON 里直接写 `${VERIDOC_OUTPUT_ROOT}` 这类路径。
 
-编排层当前会自动执行下面这组依赖：
+## 8. 旧的本地 WSL 脚本
 
-- baseline 使用 `spec.model.baseline`
-- `phase_a_sft` 使用 `spec.model.baseline`
-- `phase_b_dpo` 使用 `phase_a_sft/checkpoints`
-- `phase_c_grpo / phase_c_rloo` 使用 `phase_a_sft/checkpoints`
+仓库里仍然保留：
 
-这是为了避免手工传 checkpoint 时把主线搞乱。
+- [rebuild_wsl_envs.sh](/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL/scripts/rebuild_wsl_envs.sh)
 
-## 13. 从零开始的本地最小闭环
+它现在属于 **兼容旧场景的本地脚本**，不再是默认入口。
+如果你之后仍要回到本地 WSL，先看这个脚本，再看 runbook；但默认文档和默认执行路线已经改成云端。
 
-如果你准备第一次在 Windows + WSL 上正式起项目，推荐顺序如下。
+## 9. 下一步建议
 
-### 13.1 第一步：准备环境
+如果你的目标是先在 AutoDL 上把项目完整跑通，建议按这个节奏：
 
-```bash
-cd /home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL
+1. 先跑 `generate_sft_dataset.py`
+2. 再确认 `SGLang` 能在 `.venv-rl` 里稳定启动
+3. 先用 `--prepare-only` 跑通 pipeline 产物
+4. 最后再放开 `SFT / DPO / RL`
 
-bash scripts/rebuild_wsl_envs.sh cu126
-```
-
-### 13.2 第二步：确认 GPU 与依赖
-
-```bash
-nvidia-smi
-
-source .venv-rl/bin/activate
-python -c "import torch; print(torch.cuda.is_available())"
-python -c "import transformers, datasets, peft, trl; print('train-ok')"
-python -c "import pyarrow, verl, sglang; print('rl-ok')"
-```
-
-只有这些都通了，再继续。
-
-### 13.3 第三步：生成数据
-
-```bash
-mkdir -p outputs
-
-python scripts/generate_sft_dataset.py \
-  --count 200 \
-  --seed 7 \
-  --task-type SFT_gold \
-  --output-path outputs/sft_gold.jsonl
-
-python scripts/generate_sft_dataset.py \
-  --count 200 \
-  --seed 11 \
-  --task-type RL_prompt_only \
-  --output-path outputs/rl_prompt_only.jsonl
-```
-
-### 13.4 第四步：启动 SGLang
-
-```bash
-source .venv-rl/bin/activate
-
-python -m sglang.launch_server \
-  --model-path models/Qwen3-0.6B \
-  --host 127.0.0.1 \
-  --port 30000 \
-  --attention-backend triton \
-  --sampling-backend pytorch
-```
-
-另开一个终端后验证：
-
-```bash
-curl http://127.0.0.1:30000/v1/models
-```
-
-### 13.5 第五步：先跑一遍 prepare-only pipeline
-
-```bash
-python scripts/run_pipeline.py \
-  --spec-path configs/pipeline.qwen3_0p6.yaml \
-  --prepare-only
-```
-
-这一步会先验证：
-
-- baseline 数据链路
-- SFT / DPO / RL 的语料导出
-- manifest 生成
-- runtime plan 生成
-
-### 13.6 第六步：正式执行 pipeline
-
-```bash
-python scripts/run_pipeline.py \
-  --spec-path configs/pipeline.qwen3_0p6.yaml
-```
-
-### 13.7 第七步：看关键产物
-
-```bash
-ls outputs/pipelines/qwen3_0p6_mainline
-cat outputs/pipelines/qwen3_0p6_mainline/state.json
-cat outputs/pipelines/qwen3_0p6_mainline/summary.json
-```
-
-## 14. 低资源参数建议
-
-如果显存紧张，优先按下面顺序调整。
-
-### 14.1 baseline candidate generation
-
-- 降低 `max_new_tokens`
-- 保持 `num_candidates=4`，先降 batch，不要先降成单候选
-- `temperature` 不要太低，否则多候选太相似
-
-### 14.2 SFT / DPO
-
-优先保留：
-
-- `adapter_type = qlora`
-- `load_in_4bit = true`
-
-优先下调：
-
-- `per_device_train_batch_size`
-- `max_length`
-
-然后再提高：
-
-- `gradient_accumulation_steps`
-
-### 14.3 RL
-
-优先下调：
-
-- `rollout_n`
-- `max_response_length`
-- `ppo_micro_batch_size_per_gpu`
-
-最后再考虑减少样本量。
-
-## 15. 常见判断题
-
-### Q1. 推理框架到底是不是 vLLM
-
-baseline candidate generation：默认不是，当前主路径走 `SGLang`。  
-训练后 checkpoint 回评：不是，走本地 `transformers`。  
-RL rollout：也不是默认外部 `vLLM serve`，当前走 `verl + sglang`。
-
-### Q2. 为什么不先直接退回 `sglang 0.4.2.post1` 或 `cu118`
-
-当前默认先试的是：
-
-- `torch 2.6.0`
-- `sglang 0.4.6.post5`
-- `verl 0.4.1`
-- `cu126` 或 `cu124`
-
-因为这条版本岛更接近上游文档里公开给出的兼容组合。  
-`cu118` 先不作为默认路线；只有当前这条 12.x 路线仍然失败时，再把它当最后一级 fallback。
-
-### Q3. SFT 是不是用 vLLM 训练
-
-不是。  
-当前 SFT 训练框架是仓库内的 `transformers.Trainer + datasets + peft` runner。
-
-### Q4. DPO 是不是也用同一套 SFT 代码
-
-不是。  
-当前 DPO 用的是 `TRL DPOTrainer`。
-
-### Q5. RL 现在是不是 reward model
-
-不是。  
-当前默认还是 verifier-based reward。
-
-### Q6. 要不要先手工下载 models/Qwen3-0.6B
-
-不需要。  
-仓库默认已经指向本地 `models/Qwen3-0.6B`；只有你改回 Hugging Face repo id 时才需要联网按需下载。
-
-## 16. 已知限制
-
-- synthetic 数据仍是规则驱动，不是大规模真实保单
-- `phase_c` 仍然默认使用 verifier reward，而不是独立 RM
-- 当前 orchestration 是本地单机 v1，不是分布式训练平台
-- `run_pipeline.py` 当前更适合“把主线跑通”，还不是“大量实验托管系统”
-- 当前文档已经按本地单机模式整理，不再把云端训练作为默认路线
-
-## 17. 其他文档
-
-如果你继续按本地单机模式启动项目，推荐再看两份文档：
-
-- `docs/local_data_cloud_training_runbook.md`
-  - 现在已同步改成本地单机执行清单
-- `scripts/README.md`
-  - 汇总脚本入口与它们对应的框架边界
-
-如果你只是想开始跑项目，优先顺序建议是：
-
-1. 先把 WSL 里的 Python 3.12 + CUDA + `.venv-rl` 主环境打通
-2. 再跑 `pytest`
-3. 再跑 `prepare-only pipeline`
-4. 最后再跑完整 pipeline
+更细的操作顺序看 [local_data_cloud_training_runbook.md](/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL/docs/local_data_cloud_training_runbook.md)。

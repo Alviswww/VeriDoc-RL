@@ -10,6 +10,7 @@ from urllib import error, request
 
 from veridoc_rl.evaluation import load_jsonl
 from veridoc_rl.experiments import load_experiment_matrix
+from veridoc_rl.path_utils import expand_env_and_user
 from veridoc_rl.predictions import parse_prediction_text
 from veridoc_rl.training.prompting import DEFAULT_SYSTEM_PROMPT, build_chat_messages
 
@@ -148,9 +149,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(list(argv) if argv is not None else None)
     defaults = _load_generation_defaults(args.matrix_path)
     config = CandidateGenerationConfig(
-        model=args.model or defaults["model"],
+        model=expand_env_and_user(args.model or defaults["model"]),
         backend=args.backend or str(defaults["backend"]),
-        api_base=args.api_base or str(defaults["api_base"]),
+        api_base=expand_env_and_user(args.api_base or str(defaults["api_base"])),
         api_key=args.api_key,
         num_candidates=int(
             args.num_candidates if args.num_candidates is not None else defaults["num_candidates"]
@@ -186,9 +187,11 @@ def _load_generation_defaults(matrix_path: Path) -> dict[str, Any]:
     matrix = load_experiment_matrix(matrix_path)
     inference = dict(matrix.inference)
     return {
-        "model": matrix.base_model.get("mvp", "models/Qwen3-0.6B"),
+        "model": expand_env_and_user(str(matrix.base_model.get("mvp", "models/Qwen3-0.6B"))),
         "backend": str(inference.get("backend", "sglang")),
-        "api_base": str(inference.get("api_base", "http://127.0.0.1:30000/v1")),
+        "api_base": expand_env_and_user(
+            str(inference.get("api_base", "http://127.0.0.1:30000/v1"))
+        ),
         "num_candidates": int(inference.get("num_candidates", 4)),
         "temperature": float(inference.get("temperature", 0.8)),
         "top_p": float(inference.get("top_p", 0.95)),

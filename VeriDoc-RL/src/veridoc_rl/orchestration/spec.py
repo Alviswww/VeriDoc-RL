@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from veridoc_rl.experiments.matrix import _parse_simple_yaml
+from veridoc_rl.path_utils import expand_env_and_user
 from veridoc_rl.training.prompting import DEFAULT_SYSTEM_PROMPT
 
 
@@ -83,20 +84,24 @@ def load_pipeline_spec(path: Path) -> PipelineSpec:
 
     return PipelineSpec(
         run=RunConfig(
-            name=str(run_payload["name"]),
-            output_root=str(run_payload.get("output_root", "outputs/pipelines")),
+            name=expand_env_and_user(str(run_payload["name"])),
+            output_root=expand_env_and_user(str(run_payload.get("output_root", "outputs/pipelines"))),
         ),
         model=ModelConfig(
-            baseline=str(model_payload["baseline"]),
-            inference_backend=str(model_payload.get("inference_backend", "sglang")),
-            inference_api_base=str(
-                model_payload.get("inference_api_base", "http://127.0.0.1:30000/v1")
+            baseline=expand_env_and_user(str(model_payload["baseline"])),
+            inference_backend=expand_env_and_user(
+                str(model_payload.get("inference_backend", "sglang"))
             ),
-            inference_api_key=str(model_payload.get("inference_api_key", "EMPTY")),
+            inference_api_base=expand_env_and_user(str(
+                model_payload.get("inference_api_base", "http://127.0.0.1:30000/v1")
+            )),
+            inference_api_key=expand_env_and_user(
+                str(model_payload.get("inference_api_key", "EMPTY"))
+            ),
         ),
         data=DataConfig(
-            sft_gold_path=str(data_payload["sft_gold_path"]),
-            rl_prompt_only_path=str(data_payload["rl_prompt_only_path"]),
+            sft_gold_path=expand_env_and_user(str(data_payload["sft_gold_path"])),
+            rl_prompt_only_path=expand_env_and_user(str(data_payload["rl_prompt_only_path"])),
         ),
         generation=GenerationConfig(
             candidate_count=int(generation_payload.get("candidate_count", 4)),
@@ -117,7 +122,7 @@ def load_pipeline_spec(path: Path) -> PipelineSpec:
             execute_training=bool(execution_payload.get("execute_training", True)),
             resume=bool(execution_payload.get("resume", True)),
         ),
-        matrix_path=str(payload.get("matrix_path", "configs/experiment_matrix.yaml")),
+        matrix_path=expand_env_and_user(str(payload.get("matrix_path", "configs/experiment_matrix.yaml"))),
     )
 
 

@@ -7,6 +7,7 @@ from veridoc_rl.experiments import load_experiment_matrix
 from veridoc_rl.training.manifests import build_training_manifests
 from veridoc_rl.training.runtime import (
     build_runtime_launch_plan,
+    execute_runtime_plan,
     write_runtime_bundle,
 )
 from veridoc_rl.training.runtime import (
@@ -95,6 +96,27 @@ def test_build_runtime_launch_plan_supports_grpo_phase(tmp_path: Path) -> None:
     assert "custom_reward_function.path=" in plan.command_preview
 
 
+def test_build_runtime_launch_plan_uses_rl_python_bin_override(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    matrix = load_experiment_matrix(Path("configs/experiment_matrix.yaml"))
+    manifests = build_training_manifests(
+        matrix,
+        output_dir=tmp_path / "bundle",
+        train_data_paths={"phase_c_grpo": Path("outputs/train.phase_c_rlvr.parquet")},
+    )
+    manifest = next(item for item in manifests if item.name == "phase_c_grpo")
+    rl_python = tmp_path / "envs" / "rl" / "bin" / "python"
+    rl_python.parent.mkdir(parents=True, exist_ok=True)
+    rl_python.write_text("", encoding="utf-8")
+    monkeypatch.setenv("VERIDOC_RL_PYTHON_BIN", str(rl_python))
+
+    plan = build_runtime_launch_plan(manifest, run_dir=tmp_path / "runs" / manifest.name)
+
+    assert plan.command[0] == str(rl_python)
+
+
 def test_build_runtime_launch_plan_supports_phase_b_dpo(tmp_path: Path) -> None:
     dpo_corpus_path = _write_dpo_corpus(tmp_path / "train.phase_b_dpo.jsonl")
     matrix = load_experiment_matrix(Path("configs/experiment_matrix.yaml"))
@@ -151,6 +173,49 @@ def test_build_runtime_launch_plan_supports_phase_a_sft(tmp_path: Path) -> None:
     assert (tmp_path / "runs" / manifest.name / "data" / "phase_a_sft.train.jsonl").exists()
 
 
+def test_build_runtime_launch_plan_uses_train_python_bin_override(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    sft_corpus_path = tmp_path / "train.phase_a_sft.jsonl"
+    sft_corpus_path.write_text(
+        json.dumps(
+            {
+                "task_type": "SFT_gold",
+                "stage": "phase_a_sft",
+                "sample_id": "sample-1",
+                "messages": [
+                    {"role": "system", "content": "Return JSON only."},
+                    {"role": "user", "content": "Extract the fields."},
+                    {
+                        "role": "assistant",
+                        "content": '{"sample_id":"sample-1","fields":{},"validations":[]}',
+                    },
+                ],
+                "metadata": {},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    matrix = load_experiment_matrix(Path("configs/experiment_matrix.yaml"))
+    manifests = build_training_manifests(
+        matrix,
+        output_dir=tmp_path / "bundle",
+        train_data_paths={"phase_a_sft": sft_corpus_path},
+    )
+    manifest = next(item for item in manifests if item.name == "phase_a_sft")
+    train_python = tmp_path / "envs" / "train" / "bin" / "python"
+    train_python.parent.mkdir(parents=True, exist_ok=True)
+    train_python.write_text("", encoding="utf-8")
+    monkeypatch.setenv("VERIDOC_TRAIN_PYTHON_BIN", str(train_python))
+
+    plan = build_runtime_launch_plan(manifest, run_dir=tmp_path / "runs" / manifest.name)
+
+    assert plan.command[0] == str(train_python)
+
+
 def test_prepare_verl_runtime_cli_writes_launch_files(tmp_path: Path) -> None:
     matrix = load_experiment_matrix(Path("configs/experiment_matrix.yaml"))
     manifests = build_training_manifests(
@@ -191,6 +256,42 @@ def test_prepare_verl_runtime_cli_writes_launch_files(tmp_path: Path) -> None:
     assert (tmp_path / "run_grpo" / "launch.sh").exists()
 
 
+def test_execute_runtime_plan_uses_target_launcher(monkeypatch) -> None:
+    from veridoc_rl.training.runtime import RuntimeLaunchPlan
+
+    captured: dict[str, object] = {}
+
+    def _fake_run(command, check):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        captured["check"] = check
+
+        class _Result:
+            returncode = 0
+
+        return _Result()
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    plan = RuntimeLaunchPlan(
+        supported=True,
+        manifest_name="phase_c_grpo",
+        phase="phase_c_grpo",
+        runtime_backend="verl",
+        run_dir=".",
+        command=["/bin/true"],
+        command_preview="/bin/true",
+        train_data_path=None,
+        eval_data_path=None,
+        generated_files=[],
+        reason="",
+    )
+
+    exit_code = execute_runtime_plan(plan)
+
+    assert exit_code == 0
+    assert captured["command"] == ["/bin/true"]
+    assert captured["check"] is False
+
+
 def test_prepare_runtime_cli_writes_dpo_launch_files(tmp_path: Path) -> None:
     dpo_corpus_path = _write_dpo_corpus(tmp_path / "train.phase_b_dpo.jsonl")
     matrix = load_experiment_matrix(Path("configs/experiment_matrix.yaml"))
@@ -220,3 +321,44 @@ def test_prepare_runtime_cli_writes_dpo_launch_files(tmp_path: Path) -> None:
     assert (tmp_path / "run_dpo" / "runtime_plan.json").exists()
     assert (tmp_path / "run_dpo" / "launch.sh").exists()
     assert (tmp_path / "run_dpo" / "dpo_config.json").exists()
+
+
+def test_load_training_manifest_expands_env_vars(tmp_path: Path, monkeypatch) -> None:
+    from veridoc_rl.training.runtime import load_training_manifest
+
+    monkeypatch.setenv("VERIDOC_MODEL_PATH", str(tmp_path / "models" / "Qwen3-0.6B"))
+    monkeypatch.setenv("VERIDOC_TRAIN_PATH", str(tmp_path / "train.jsonl"))
+    monkeypatch.setenv("VERIDOC_OUTPUT_PATH", str(tmp_path / "outputs" / "phase_a_sft"))
+
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "name": "phase_a_sft",
+                "phase": "phase_a_sft",
+                "backend": "multi",
+                "algorithm": "sft",
+                "base_model": "${VERIDOC_MODEL_PATH}",
+                "base_model_source": "baseline",
+                "train_data_path": "${VERIDOC_TRAIN_PATH}",
+                "eval_data_path": None,
+                "output_dir": "${VERIDOC_OUTPUT_PATH}",
+                "prompt_template": "veridoc_v1",
+                "reward_profile": "default",
+                "adapter_config": {},
+                "precision_config": {},
+                "trainer": {},
+                "runtime": {},
+                "notes": [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    manifest = load_training_manifest(manifest_path)
+
+    assert manifest.base_model == str(tmp_path / "models" / "Qwen3-0.6B")
+    assert manifest.train_data_path == str(tmp_path / "train.jsonl")
+    assert manifest.output_dir == str(tmp_path / "outputs" / "phase_a_sft")

@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
+import os
 import shlex
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from veridoc_rl.evaluation import load_jsonl
+from veridoc_rl.path_utils import expand_env_and_user
 from veridoc_rl.training.manifests import TrainingManifest
 from veridoc_rl.training.trl_dpo import TrlDPOConfig, export_trl_dpo_dataset, write_trl_dpo_config
 from veridoc_rl.training.trl_sft import TrlSFTConfig, export_sft_dataset, write_trl_sft_config
@@ -38,6 +40,8 @@ DEFAULT_RUNTIME = {
     "test_freq": 10,
     "reward_manager": "naive",
 }
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 @dataclass(slots=True, frozen=True)
@@ -79,13 +83,15 @@ def load_training_manifest(path: Path) -> TrainingManifest:
         phase=str(payload["phase"]),
         backend=str(payload["backend"]),
         algorithm=str(payload["algorithm"]),
-        base_model=str(payload["base_model"]),
+        base_model=expand_env_and_user(str(payload["base_model"])),
         base_model_source=str(payload.get("base_model_source", "baseline")),
-        train_data_path=str(payload["train_data_path"]),
+        train_data_path=expand_env_and_user(str(payload["train_data_path"])),
         eval_data_path=(
-            str(payload["eval_data_path"]) if payload.get("eval_data_path") is not None else None
+            expand_env_and_user(str(payload["eval_data_path"]))
+            if payload.get("eval_data_path") is not None
+            else None
         ),
-        output_dir=str(payload["output_dir"]),
+        output_dir=expand_env_and_user(str(payload["output_dir"])),
         prompt_template=str(payload["prompt_template"]),
         reward_profile=str(payload["reward_profile"]),
         adapter_config=dict(payload.get("adapter_config", {})),
@@ -185,10 +191,11 @@ def write_runtime_bundle(run_dir: Path, plan: RuntimeLaunchPlan) -> None:
 def execute_runtime_plan(plan: RuntimeLaunchPlan) -> int:
     if not plan.supported:
         raise RuntimeError(plan.reason or "Unsupported runtime plan.")
-    if plan.runtime_backend == "verl" and importlib.util.find_spec("verl") is None:
-        raise RuntimeError("verl is not installed in the active Python environment.")
-    if plan.runtime_backend == "trl" and importlib.util.find_spec("trl") is None:
-        raise RuntimeError("trl is not installed in the active Python environment.")
+    if not plan.command:
+        raise RuntimeError("Runtime plan does not contain a launch command.")
+    launcher = plan.command[0]
+    if shutil.which(launcher) is None and not Path(launcher).exists():
+        raise RuntimeError(f"Runtime launcher is not available: {launcher}")
     return subprocess.run(plan.command, check=False).returncode
 
 
@@ -282,6 +289,7 @@ def _resolve_runtime_info(
     nnodes: int | None,
     python_bin: str | None,
 ) -> dict[str, Any]:
+    runtime_backend = _optional_str(manifest.runtime.get("backend_name"))
     runtime_info = dict(DEFAULT_RUNTIME)
     runtime_info.update(dict(manifest.runtime.get("launcher_defaults", {})))
     runtime_info.update(
@@ -295,8 +303,38 @@ def _resolve_runtime_info(
     if nnodes is not None:
         runtime_info["nnodes"] = nnodes
     if python_bin is not None:
-        runtime_info["python_bin"] = python_bin
+        runtime_info["python_bin"] = expand_env_and_user(python_bin)
+        return runtime_info
+
+    override_key = "rl_python_bin" if runtime_backend == "verl" else "train_python_bin"
+    override_python_bin = _optional_str(runtime_info.get(override_key))
+    if override_python_bin is not None:
+        runtime_info["python_bin"] = expand_env_and_user(override_python_bin)
+        return runtime_info
+
+    configured_python_bin = _optional_str(runtime_info.get("python_bin"))
+    if configured_python_bin in {None, "", "python", "python3"}:
+        runtime_info["python_bin"] = _default_python_bin_for_backend(runtime_backend)
+        return runtime_info
+
+    runtime_info["python_bin"] = expand_env_and_user(configured_python_bin)
     return runtime_info
+
+
+def _default_python_bin_for_backend(runtime_backend: str | None) -> str:
+    if runtime_backend == "verl":
+        env_name = "VERIDOC_RL_PYTHON_BIN"
+        repo_candidate = REPO_ROOT / ".venv-rl" / "bin" / "python"
+    else:
+        env_name = "VERIDOC_TRAIN_PYTHON_BIN"
+        repo_candidate = REPO_ROOT / ".venv-train" / "bin" / "python"
+
+    configured = _optional_str(os.environ.get(env_name))
+    if configured is not None:
+        return expand_env_and_user(configured)
+    if repo_candidate.exists():
+        return str(repo_candidate)
+    return sys.executable
 
 
 def _build_trl_runtime_launch_plan(

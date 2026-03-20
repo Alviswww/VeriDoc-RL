@@ -1,94 +1,66 @@
 # scripts
 
-这份索引只说明仓库脚本入口，以及它们当前各自负责哪一段主链路。
+这份索引现在按 **AutoDL 云端主线** 整理，不再把本地 WSL 作为默认路线。
 
-先看现在的默认边界：
+## 环境与服务
 
-- baseline candidate generation 默认走 `SGLang` 的 OpenAI-compatible API
-- 仓库主流程默认只需要 `.venv-rl`
-- `.venv-rl` 负责开发、测试、`prepare-only`、SFT、DPO、RL
-- 当前默认版本岛是 `torch 2.6.0 + sglang 0.4.6.post5 + verl 0.4.1`
-- 对 `RTX 2060 / SM75`，SGLang 默认建议加 `--attention-backend triton --sampling-backend pytorch`
-- `phase_a_sft` 当前实现是 `transformers.Trainer + datasets + peft`
-- `phase_b_dpo` 当前实现是 `TRL DPOTrainer`
-- `phase_c_grpo / phase_c_rloo` 当前桥接到 `verl`，默认 rollout backend 是 `sglang`
-- `vLLM` 仅保留为可选实验路径，不再是默认环境脚本的一部分
+- `bash scripts/bootstrap_autodl_envs.sh`
+  - 默认重建两套环境
+  - `.venv-train`：SFT / DPO / inference / tests
+  - `.venv-rl`：`SGLang` serving + `verl`
+- `bash scripts/start_sglang_server.sh`
+  - 使用 `.venv-rl` 启动本地 `SGLang`
+  - 默认优先读取 `VERIDOC_MODEL_PATH`
+  - 支持 `MODEL_PATH / HOST / PORT / ATTENTION_BACKEND / SAMPLING_BACKEND` 环境变量覆盖
+  - 额外的 SGLang 参数可以直接追加在脚本命令后面
+- `bash scripts/rebuild_wsl_envs.sh`
+  - 旧的本地 WSL 兼容脚本
+  - 不再是默认入口
 
 ## 数据与评测
 
 - `python scripts/generate_sft_dataset.py`
-  - 生成带 bucket 元数据的 synthetic 数据
+  - 生成 synthetic 数据
   - 支持 `SFT_gold`、`SFT_silver`、`RL_prompt_only`
 - `python scripts/generate_candidates.py`
-  - 读取带 `input` 的 JSONL
-  - 通过 OpenAI-compatible API 生成多候选 `candidate.jsonl`
-  - 默认推荐接本地 `SGLang`，也兼容 `vLLM`
+  - 通过 OpenAI-compatible API 生成多候选
+  - 默认推荐接 `SGLang`
 - `python scripts/generate_preference_dataset.py`
-  - 读取 reference 和 candidate JSONL
-  - 用 verifier + composite reward 生成 `DPO_preference`
+  - 用 verifier + composite reward 生成 DPO preference
 - `python scripts/run_phase_a_eval.py`
-  - 读取 reference / prediction JSONL
-  - 运行 verifier suite
-  - 输出报告与 cases
+  - 运行 verifier suite 并输出报告
 - `python scripts/compare_phase_reports.py`
-  - 读取多份评测报告
-  - 输出对比报告和 SVG 图
+  - 对比多份评测报告
 - `python scripts/generate_experiment_plan.py`
-  - 读取 `configs/experiment_matrix.yaml`
-  - 导出实验计划 JSON / Markdown
+  - 从 experiment matrix 导出实验计划
 
 ## 训练准备
 
 - `python scripts/prepare_training_data.py`
-  - 把 `SFT_gold` / `DPO_preference` / `RL_prompt_only` 转成训练语料
-  - 输出 `phase_a_sft` / `phase_b_dpo` / `phase_c_rlvr` 可消费 JSONL
+  - 生成 `phase_a_sft / phase_b_dpo / phase_c_rlvr` 训练语料
 - `python scripts/generate_training_manifests.py`
-  - 读取 `configs/experiment_matrix.yaml`
-  - 按 phase 生成 manifest bundle
-  - 支持分别传入 train data 与 base model
+  - 生成 phase 级 manifest bundle
 - `python scripts/prepare_training_runtime.py`
-  - 读取单个 `manifest.json`
   - 生成 `runtime_plan.json` 与 `launch.sh`
-  - `phase_a_sft` 会桥接到仓库内 SFT runner
-  - `phase_b_dpo` 会桥接到仓库内 TRL DPO runner
-  - `phase_c_grpo / phase_c_rloo` 会桥接到 `verl.trainer.main_ppo`
 - `python scripts/prepare_verl_runtime.py`
   - `prepare_training_runtime.py` 的兼容别名
 
 ## 推理与编排
 
 - `python scripts/run_inference.py`
-  - 读取带 `input` 的 JSONL
-  - 使用本地 `transformers` / checkpoint 做离线推理
-  - 输出统一 `predictions.jsonl`
+  - 用本地 `transformers` / checkpoint 做离线推理
 - `python scripts/run_pipeline.py`
   - 读取单个 pipeline spec
   - 串起 baseline / SFT / DPO / RLVR
-  - 维护 `state.json`、`summary.json` 和 checkpoint 依赖
+  - 维护 `state.json`、`summary.json`
+  - 默认从 `.venv-train` 发起，但 RL 阶段会自动切到 `VERIDOC_RL_PYTHON_BIN`
 
-## 推荐启动顺序
+## 云端推荐顺序
 
-如果你第一次运行项目，推荐顺序：
-
-1. `generate_sft_dataset.py`
-2. `generate_candidates.py`
-3. `generate_preference_dataset.py`
-4. `prepare_training_data.py`
-5. `generate_training_manifests.py`
-6. `prepare_training_runtime.py`
-7. `run_pipeline.py --prepare-only`
-8. `run_pipeline.py`
-
-在这之前，先执行：
-
-```bash
-bash scripts/rebuild_wsl_envs.sh cu126
-```
-
-这个脚本现在默认只重建 `.venv-rl`，也就是本地主链路需要的唯一环境。
-
-如果你后续确实要单独做 `vLLM` 对比，再显式执行：
-
-```bash
-bash scripts/rebuild_wsl_envs.sh cu126 --with-vllm
-```
+1. `bash scripts/bootstrap_autodl_envs.sh auto`
+2. `source configs/autodl.env.example`
+3. `pytest`
+4. `python scripts/generate_sft_dataset.py`
+5. `bash scripts/start_sglang_server.sh`
+6. `python scripts/run_pipeline.py --spec-path configs/pipeline.autodl.qwen3_0p6.yaml --prepare-only`
+7. `python scripts/run_pipeline.py --spec-path configs/pipeline.autodl.qwen3_0p6.yaml`
