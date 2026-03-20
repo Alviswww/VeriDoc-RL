@@ -18,8 +18,8 @@ class RunConfig:
 @dataclass(slots=True, frozen=True)
 class ModelConfig:
     baseline: str
-    inference_backend: str = "vllm"
-    inference_api_base: str = "http://127.0.0.1:8000/v1"
+    inference_backend: str = "sglang"
+    inference_api_base: str = "http://127.0.0.1:30000/v1"
     inference_api_key: str = "EMPTY"
 
 
@@ -88,9 +88,9 @@ def load_pipeline_spec(path: Path) -> PipelineSpec:
         ),
         model=ModelConfig(
             baseline=str(model_payload["baseline"]),
-            inference_backend=str(model_payload.get("inference_backend", "vllm")),
+            inference_backend=str(model_payload.get("inference_backend", "sglang")),
             inference_api_base=str(
-                model_payload.get("inference_api_base", "http://127.0.0.1:8000/v1")
+                model_payload.get("inference_api_base", "http://127.0.0.1:30000/v1")
             ),
             inference_api_key=str(model_payload.get("inference_api_key", "EMPTY")),
         ),

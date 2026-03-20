@@ -25,7 +25,7 @@ class AdapterConfig:
     target_modules: tuple[str, ...] = DEFAULT_LORA_TARGET_MODULES
     load_in_4bit: bool = True
     bnb_4bit_quant_type: str = "nf4"
-    bnb_4bit_compute_dtype: str = "bfloat16"
+    bnb_4bit_compute_dtype: str = "float16"
     bnb_4bit_use_double_quant: bool = True
 
     def to_dict(self) -> dict[str, Any]:
@@ -36,7 +36,7 @@ class AdapterConfig:
 
 @dataclass(slots=True, frozen=True)
 class PrecisionConfig:
-    torch_dtype: str = "bfloat16"
+    torch_dtype: str = "float16"
     attn_implementation: str | None = None
     gradient_checkpointing: bool = True
 
@@ -56,7 +56,7 @@ def adapter_config_from_mapping(value: Mapping[str, Any] | None) -> AdapterConfi
         target_modules=_coerce_string_tuple(target_modules),
         load_in_4bit=bool(value.get("load_in_4bit", True)),
         bnb_4bit_quant_type=str(value.get("bnb_4bit_quant_type", "nf4")),
-        bnb_4bit_compute_dtype=str(value.get("bnb_4bit_compute_dtype", "bfloat16")),
+        bnb_4bit_compute_dtype=str(value.get("bnb_4bit_compute_dtype", "float16")),
         bnb_4bit_use_double_quant=bool(value.get("bnb_4bit_use_double_quant", True)),
     )
 
@@ -66,7 +66,7 @@ def precision_config_from_mapping(value: Mapping[str, Any] | None) -> PrecisionC
         return PrecisionConfig()
     attn_implementation = value.get("attn_implementation")
     return PrecisionConfig(
-        torch_dtype=str(value.get("torch_dtype", "bfloat16")),
+        torch_dtype=str(value.get("torch_dtype", "float16")),
         attn_implementation=str(attn_implementation) if attn_implementation is not None else None,
         gradient_checkpointing=bool(value.get("gradient_checkpointing", True)),
     )

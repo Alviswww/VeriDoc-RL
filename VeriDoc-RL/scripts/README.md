@@ -1,16 +1,16 @@
 # scripts
 
-这份索引专门说明仓库脚本入口，以及它们各自对应的框架。
+这份索引只说明仓库脚本入口，以及它们当前各自负责哪一段主链路。
 
-先看最关键的边界：
+先看现在的默认边界：
 
-- `vLLM` 只负责 baseline candidate generation
-- `vLLM` 推荐放在单独的 `.venv-vllm`
-- `transformers + peft` 负责 checkpoint 本地推理
-- 仓库主流程推荐放在 `.venv-rl`
-- `phase_a_sft` 负责本地 SFT，当前实现是 `transformers.Trainer + datasets + peft`
-- `phase_b_dpo` 负责本地 DPO，当前实现是 `TRL DPOTrainer`
-- `phase_c_grpo / phase_c_rloo` 负责 RL，当前桥接到 `verl`，默认 rollout backend 是 `sglang`
+- baseline candidate generation 默认走 `SGLang` 的 OpenAI-compatible API
+- 仓库主流程默认只需要 `.venv-rl`
+- `.venv-rl` 负责开发、测试、`prepare-only`、SFT、DPO、RL
+- `phase_a_sft` 当前实现是 `transformers.Trainer + datasets + peft`
+- `phase_b_dpo` 当前实现是 `TRL DPOTrainer`
+- `phase_c_grpo / phase_c_rloo` 当前桥接到 `verl`，默认 rollout backend 是 `sglang`
+- `vLLM` 仅保留为可选实验路径，不再是默认环境脚本的一部分
 
 ## 数据与评测
 
@@ -19,8 +19,8 @@
   - 支持 `SFT_gold`、`SFT_silver`、`RL_prompt_only`
 - `python scripts/generate_candidates.py`
   - 读取带 `input` 的 JSONL
-  - 通过 `vLLM` OpenAI-compatible API 生成多候选 `candidate.jsonl`
-  - 输出格式可直接喂给 `generate_preference_dataset.py`
+  - 通过 OpenAI-compatible API 生成多候选 `candidate.jsonl`
+  - 默认推荐接本地 `SGLang`，也兼容 `vLLM`
 - `python scripts/generate_preference_dataset.py`
   - 读取 reference 和 candidate JSONL
   - 用 verifier + composite reward 生成 `DPO_preference`
@@ -76,3 +76,17 @@
 6. `prepare_training_runtime.py`
 7. `run_pipeline.py --prepare-only`
 8. `run_pipeline.py`
+
+在这之前，先执行：
+
+```bash
+bash scripts/rebuild_wsl_envs.sh cu126
+```
+
+这个脚本现在默认只重建 `.venv-rl`，也就是本地主链路需要的唯一环境。
+
+如果你后续确实要单独做 `vLLM` 对比，再显式执行：
+
+```bash
+bash scripts/rebuild_wsl_envs.sh cu126 --with-vllm
+```

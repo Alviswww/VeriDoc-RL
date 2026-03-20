@@ -24,7 +24,7 @@ def test_load_pipeline_spec_from_yaml(tmp_path: Path) -> None:
                 '  name: "demo_run"',
                 '  output_root: "outputs/pipelines"',
                 "model:",
-                '  baseline: "Qwen/Qwen3.5-0.8B"',
+                '  baseline: "models/Qwen3-0.6B"',
                 "data:",
                 '  sft_gold_path: "outputs/sft_gold.jsonl"',
                 '  rl_prompt_only_path: "outputs/rl_prompt_only.jsonl"',
@@ -38,7 +38,7 @@ def test_load_pipeline_spec_from_yaml(tmp_path: Path) -> None:
     spec = load_pipeline_spec(spec_path)
 
     assert spec.run.name == "demo_run"
-    assert spec.model.baseline == "Qwen/Qwen3.5-0.8B"
+    assert spec.model.baseline == "models/Qwen3-0.6B"
     assert spec.pipeline.enable_rl is False
     assert spec.generation.candidate_count == 4
 
@@ -47,7 +47,7 @@ def test_pipeline_state_roundtrip(tmp_path: Path) -> None:
     state_path = tmp_path / "state.json"
     state = PipelineState(run_name="demo")
     stage = state.ensure_stage("phase_a_sft")
-    mark_stage_running(stage, base_model="Qwen/Qwen3.5-0.8B")
+    mark_stage_running(stage, base_model="models/Qwen3-0.6B")
     stage.manifest_path = "manifest.json"
     mark_stage_succeeded(stage)
     save_state(state_path, state)
@@ -60,10 +60,10 @@ def test_pipeline_state_roundtrip(tmp_path: Path) -> None:
 
 
 def test_pipeline_paths_layout() -> None:
-    spec = load_pipeline_spec(Path("configs/pipeline.qwen35.yaml"))
+    spec = load_pipeline_spec(Path("configs/pipeline.qwen3_0p6.yaml"))
     paths = PipelinePaths.from_spec(spec)
 
-    assert str(paths.stage_dir("phase_a_sft")).endswith("qwen35_0p8b_mainline/phase_a_sft")
+    assert str(paths.stage_dir("phase_a_sft")).endswith("qwen3_0p6_mainline/phase_a_sft")
     assert str(paths.stage_manifest_path("phase_b_dpo")).endswith("phase_b_dpo/manifest.json")
     assert str(paths.stage_checkpoint_dir("phase_c_grpo")).endswith("phase_c_grpo/checkpoints")
 
@@ -77,7 +77,7 @@ def test_run_pipeline_uses_stubbed_stage_executors(tmp_path: Path, monkeypatch) 
                 '  name: "demo_run"',
                 f'  output_root: "{tmp_path.as_posix()}"',
                 "model:",
-                '  baseline: "Qwen/Qwen3.5-0.8B"',
+                '  baseline: "models/Qwen3-0.6B"',
                 "data:",
                 f'  sft_gold_path: "{(tmp_path / "sft_gold.jsonl").as_posix()}"',
                 f'  rl_prompt_only_path: "{(tmp_path / "rl_prompt_only.jsonl").as_posix()}"',

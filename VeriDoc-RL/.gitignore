@@ -14,3 +14,7 @@ build/
 dist/
 .DS_Store
 Thumbs.db
+models/
+outputs/
+.build/
+.pip-cache/

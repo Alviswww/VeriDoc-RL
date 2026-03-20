@@ -44,7 +44,11 @@ def test_generate_candidates_for_records_parses_json_choices(monkeypatch) -> Non
             ]
         },
     )
-    config = CandidateGenerationConfig(model="Qwen/Qwen3.5-0.8B", num_candidates=2)
+    config = CandidateGenerationConfig(
+        model="models/Qwen3-0.6B",
+        backend="sglang",
+        num_candidates=2,
+    )
 
     rows = generate_candidates_for_records([_input_record()], config=config)
 
@@ -52,7 +56,7 @@ def test_generate_candidates_for_records_parses_json_choices(monkeypatch) -> Non
     assert rows[0]["candidate_id"] == "sample-1::cand_0"
     assert rows[0]["prediction"]["fields"]["policyholder_name"] == "张三"
     assert rows[1]["prediction"]["fields"]["policyholder_name"] == "李四"
-    assert rows[0]["backend"] == "vllm"
+    assert rows[0]["backend"] == "sglang"
 
 
 def test_candidate_cli_writes_jsonl(tmp_path: Path, monkeypatch) -> None:
@@ -82,7 +86,7 @@ def test_candidate_cli_writes_jsonl(tmp_path: Path, monkeypatch) -> None:
             "--output-path",
             str(output_path),
             "--model",
-            "Qwen/Qwen3.5-0.8B",
+            "models/Qwen3-0.6B",
             "--num-candidates",
             "1",
         ]
@@ -90,5 +94,16 @@ def test_candidate_cli_writes_jsonl(tmp_path: Path, monkeypatch) -> None:
 
     assert exit_code == 0
     payload = json.loads(output_path.read_text(encoding="utf-8").splitlines()[0])
-    assert payload["model"] == "Qwen/Qwen3.5-0.8B"
+    assert payload["model"] == "models/Qwen3-0.6B"
     assert payload["prediction"]["sample_id"] == "sample-1"
+
+
+def test_request_chat_candidates_rejects_unknown_backend() -> None:
+    config = CandidateGenerationConfig(model="models/Qwen3-0.6B", backend="unknown")
+
+    try:
+        candidates_module.request_chat_candidates(input_payload=_input_record()["input"], config=config)
+    except ValueError as exc:
+        assert "Unsupported inference backend" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for unsupported backend.")

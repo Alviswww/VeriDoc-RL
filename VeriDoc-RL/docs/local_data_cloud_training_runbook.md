@@ -3,7 +3,7 @@
 这个文件保留了原来的路径名，但内容已经改成 **本地单机模式 runbook**。当前仓库的默认路线不再是假设“本地准备数据、云端训练”，而是：
 
 - 在同一台 Windows + WSL 机器里完成环境安装
-- 在 WSL 里启动 `vLLM`
+- 在 WSL 里启动 `SGLang`
 - 在 WSL 里执行 `SFT / DPO / RL`
 - 在 WSL 里回评和对比
 
@@ -13,7 +13,7 @@
 
 先把最关键的边界说清楚：
 
-- baseline candidate 生成：`vLLM`
+- baseline candidate 生成：`SGLang`
 - checkpoint 回评推理：`transformers + peft`
 - `phase_a_sft`：`transformers.Trainer + datasets + peft`
 - `phase_b_dpo`：`TRL DPOTrainer`
@@ -21,7 +21,7 @@
 
 所以：
 
-- `vLLM` 不是 SFT 训练框架
+- `SGLang` 默认只负责 baseline candidate generation
 - SFT 训练框架不是 `TRL SFTTrainer`
 - 当前 SFT 实现是仓库里的 `src/veridoc_rl/training/trl_sft.py`
 - 这个文件名有历史原因，但内部实际用的是 `transformers.Trainer`
@@ -30,7 +30,7 @@
 
 当前本地单机主线固定为：
 
-1. baseline：`Qwen/Qwen3.5-0.8B`
+1. baseline：`models/Qwen3-0.6B`
 2. `phase_a_sft`：在 baseline 上做 `QLoRA SFT`
 3. `phase_b_dpo`：在 `phase_a_sft/checkpoints` 上做 `DPO`
 4. `phase_c_grpo` 或 `phase_c_rloo`：在 `phase_a_sft/checkpoints` 上做 `RLVR`
@@ -57,7 +57,7 @@ cd /home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL
 
 - Python 环境
 - 依赖安装
-- `vLLM` 启动
+- `SGLang` 启动
 - 训练
 - 推理
 - 评测
@@ -72,7 +72,6 @@ cd /home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL
 如果 WSL 里已经有 `python3.12`：
 
 ```bash
-python3.12 -m venv .venv-vllm
 python3.12 -m venv .venv-rl
 ```
 
@@ -80,7 +79,6 @@ python3.12 -m venv .venv-rl
 
 ```bash
 uv python install 3.12
-uv venv --python 3.12 .venv-vllm
 uv venv --python 3.12 .venv-rl
 ```
 
@@ -102,40 +100,48 @@ Failed to initialize NVML: GPU access blocked by the operating system
 
 ### 4.4 安装依赖
 
-建议直接分成两个环境安装：
+当前默认主路径只需要一个环境：
 
-- `.venv-vllm`
-  - 只启动 baseline candidate generation 的 `vLLM` 服务
 - `.venv-rl`
   - 跑仓库代码、`prepare-only`、SFT、DPO、RL
+  - baseline candidate generation 默认也通过这个环境对接本地 `SGLang`
   - 当前默认 RL rollout backend 是 `sglang`
 
-示意命令：
+如果你后续想单独做 `vLLM` 对比，再额外准备 `.venv-vllm`。
+
+对于 `RTX 2060 6GB` 这类老卡，当前仓库默认训练精度已经收敛到 `float16`，不要再把默认精度改回 `bfloat16`。
+
+先确认一件事：`/usr/local/cuda` 必须先切到 `12.6.x` 或 `12.4.x`，再重建环境。
+
+当前这台仓库机器上观测到的是：
+
+```text
+/usr/local/cuda -> /usr/local/cuda-13.2
+```
+
+如果你的机器也是 13.x，先不要继续复用旧环境，先把用户态 CUDA 收敛到 `12.6.x` 或 `12.4.x`。
+
+仓库里已经提供了重建脚本：
 
 ```bash
-source .venv-vllm/bin/activate
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-pip install vllm
-
-source .venv-rl/bin/activate
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-pip install -e .[dev,train]
-pip install pyarrow verl sglang
+bash scripts/rebuild_wsl_envs.sh cu126
 ```
 
 说明：
 
-- 上面 `cu124` 只是示意，要改成与你机器匹配的 CUDA wheel 源
-- `vLLM` 和 `verl` 不再建议强行塞进同一个环境
+- 也可以把 `cu126` 换成 `cu124`
+- 脚本会先检查 `/usr/local/cuda/version.json` 是否匹配目标大版本
+- `.venv-rl` 会安装 `torch 2.9.1 + verl 0.7.1 + sglang 0.5.9`
+- 默认不会碰 `.venv-vllm`
+- 如果你必须保留自己的 `torch + cu126/cu124` 组合，不要直接装 `vLLM` 预编译 wheel；它会带自己的 `torch` 依赖
+- 只有启用 `--with-vllm` 时，脚本才要求本机可用 `uv`
+- 如果 vLLM 编译过程报 `Killed` 或退出码 `137`，优先增大 WSL 的 `memory` 和 `swap`
+- `vLLM` 和 `verl` 不建议强行塞进同一个环境
 - 如果你只想先做 dry-run，也建议直接用 `.venv-rl`
 
 ### 4.5 快速验证依赖
 
 ```bash
-source .venv-vllm/bin/activate
-python -c "import torch; print(torch.cuda.is_available())"
-python -c "import vllm; print('vllm-ok')"
-
 source .venv-rl/bin/activate
 python -c "import torch; print(torch.cuda.is_available())"
 python -c "import transformers, datasets, peft, trl; print('train-ok')"
@@ -197,25 +203,24 @@ python scripts/generate_sft_dataset.py \
   --output-path outputs/rl_prompt_only.jsonl
 ```
 
-### 6.3 启动 vLLM
+### 6.3 启动 SGLang
 
 开一个终端，保持服务常驻：
 
 ```bash
-source .venv-vllm/bin/activate
+source .venv-rl/bin/activate
 
-vllm serve Qwen/Qwen3.5-0.8B \
+python -m sglang.launch_server \
+  --model-path models/Qwen3-0.6B \
   --host 127.0.0.1 \
-  --port 8000 \
-  --max-model-len 4096 \
-  --gpu-memory-utilization 0.85
+  --port 30000
 ```
 
 再开一个终端做检查：
 
 ```bash
-source .venv-vllm/bin/activate
-curl http://127.0.0.1:8000/v1/models
+source .venv-rl/bin/activate
+curl http://127.0.0.1:30000/v1/models
 ```
 
 ### 6.4 手工生成 candidates
@@ -224,8 +229,8 @@ curl http://127.0.0.1:8000/v1/models
 python scripts/generate_candidates.py \
   --input-path outputs/sft_gold.jsonl \
   --output-path outputs/candidates.jsonl \
-  --model Qwen/Qwen3.5-0.8B \
-  --api-base http://127.0.0.1:8000/v1 \
+  --model models/Qwen3-0.6B \
+  --api-base http://127.0.0.1:30000/v1 \
   --num-candidates 4 \
   --temperature 0.8 \
   --top-p 0.95 \
@@ -271,7 +276,7 @@ python scripts/generate_training_manifests.py \
   --phase-b-train-data-path outputs/train.phase_b_dpo.jsonl \
   --phase-c-train-data-path outputs/train.phase_c_rlvr.jsonl \
   --output-dir outputs/training_bundle \
-  --phase-a-base-model Qwen/Qwen3.5-0.8B \
+  --phase-a-base-model models/Qwen3-0.6B \
   --phase-b-base-model outputs/runtime_runs/phase_a_sft/checkpoints \
   --phase-c-base-model outputs/runtime_runs/phase_a_sft/checkpoints
 ```
@@ -299,7 +304,7 @@ python scripts/prepare_training_runtime.py \
 
 ```bash
 python scripts/run_pipeline.py \
-  --spec-path configs/pipeline.qwen35.yaml \
+  --spec-path configs/pipeline.qwen3_0p6.yaml \
   --prepare-only
 ```
 
@@ -309,14 +314,14 @@ python scripts/run_pipeline.py \
 
 - `outputs/sft_gold.jsonl`
 - `outputs/rl_prompt_only.jsonl`
-- 本地 `vLLM` 服务
+- 本地 `SGLang` 服务
 - `.venv-rl`
 
 可以直接执行：
 
 ```bash
 python scripts/run_pipeline.py \
-  --spec-path configs/pipeline.qwen35.yaml
+  --spec-path configs/pipeline.qwen3_0p6.yaml
 ```
 
 它会自动完成：
@@ -334,7 +339,7 @@ python scripts/run_pipeline.py \
 默认运行目录：
 
 ```text
-outputs/pipelines/qwen35_0p8b_mainline/
+outputs/pipelines/qwen3_0p6_mainline/
 ```
 
 关键文件：
@@ -383,8 +388,8 @@ phase_a_sft/
 
 当前本地编排层已经固定好这组规则：
 
-- baseline 用 `Qwen/Qwen3.5-0.8B`
-- `phase_a_sft` 用 `Qwen/Qwen3.5-0.8B`
+- baseline 用 `models/Qwen3-0.6B`
+- `phase_a_sft` 用 `models/Qwen3-0.6B`
 - `phase_b_dpo` 用 `phase_a_sft/checkpoints`
 - `phase_c_*` 用 `phase_a_sft/checkpoints`
 
@@ -445,11 +450,11 @@ python scripts/compare_phase_reports.py \
 
 ## 12. 常见问题
 
-### Q1. 为什么 README 里说推理是 vLLM，但 SFT 又不是 vLLM
+### Q1. 为什么 README 里会同时出现 SGLang、transformers 和 verl
 
 因为它们解决的是不同问题：
 
-- `vLLM` 负责 baseline 多候选采样
+- `SGLang` 负责默认 baseline 多候选采样
 - `transformers` 负责训练和 checkpoint 本地推理
 - `verl + sglang` 负责 RL rollout
 
@@ -469,20 +474,18 @@ python scripts/compare_phase_reports.py \
 ### Q4. 第一次启动时要不要先把模型下载到本地
 
 不是必须。  
-默认写 `Qwen/Qwen3.5-0.8B` 就会按需下载。
+当前仓库默认已经直接写成本地路径 `models/Qwen3-0.6B`；只有你手工改回 `Qwen/Qwen3-0.6B` 时，才会发生按需下载。
 
 ## 13. 推荐的第一次实战节奏
 
 如果你现在准备在 Windows + WSL 上真正开跑，建议节奏是：
 
 1. 先解决 `nvidia-smi` 在 WSL 内可用
-2. 建一个 Python 3.12 虚拟环境
-3. 安装匹配 CUDA 的 `torch`
-4. 安装 `.[dev,train]`
-5. 安装 `vllm`
-6. 跑 `pytest`
-7. 跑 `prepare-only pipeline`
-8. 再跑完整 pipeline
+2. 先把 `/usr/local/cuda` 切到 `12.6.x` 或 `12.4.x`
+3. 运行 `bash scripts/rebuild_wsl_envs.sh cu126`
+4. 跑 `pytest`
+5. 跑 `prepare-only pipeline`
+6. 再跑完整 pipeline
 
 如果你只想先把项目跑通，不建议第一天就直接上 RL。更稳的顺序是：
 

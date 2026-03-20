@@ -1,11 +1,11 @@
 run:
-  name: "qwen35_0p8b_mainline"
+  name: "qwen3_0p6_mainline"
   output_root: "outputs/pipelines"
 
 model:
-  baseline: "Qwen/Qwen3.5-0.8B"
-  inference_backend: "vllm"
-  inference_api_base: "http://127.0.0.1:8000/v1"
+  baseline: "models/Qwen3-0.6B"
+  inference_backend: "sglang"
+  inference_api_base: "http://127.0.0.1:30000/v1"
   inference_api_key: "EMPTY"
 
 data:

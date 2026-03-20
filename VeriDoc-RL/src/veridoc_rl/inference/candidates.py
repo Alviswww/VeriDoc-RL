@@ -17,8 +17,8 @@ from veridoc_rl.training.prompting import DEFAULT_SYSTEM_PROMPT, build_chat_mess
 @dataclass(slots=True, frozen=True)
 class CandidateGenerationConfig:
     model: str
-    backend: str = "vllm"
-    api_base: str = "http://127.0.0.1:8000/v1"
+    backend: str = "sglang"
+    api_base: str = "http://127.0.0.1:30000/v1"
     api_key: str = "EMPTY"
     num_candidates: int = 4
     temperature: float = 0.8
@@ -74,7 +74,7 @@ def request_chat_candidates(
     input_payload: Mapping[str, Any],
     config: CandidateGenerationConfig,
 ) -> list[str]:
-    if config.backend != "vllm":
+    if config.backend not in {"sglang", "vllm"}:
         raise ValueError(f"Unsupported inference backend: {config.backend}")
     messages = build_chat_messages(
         input_payload,
@@ -112,7 +112,7 @@ def request_chat_candidates(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Generate candidate predictions through a vLLM OpenAI-compatible API."
+        description="Generate candidate predictions through an OpenAI-compatible inference API."
     )
     parser.add_argument("--input-path", type=Path, required=True, help="Input JSONL path.")
     parser.add_argument("--output-path", type=Path, required=True, help="Candidate JSONL output.")
@@ -125,7 +125,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", help="Override model name used for candidate generation.")
     parser.add_argument(
         "--backend",
-        choices=("vllm",),
+        choices=("sglang", "vllm"),
         help="Inference backend. Defaults to the matrix inference backend.",
     )
     parser.add_argument("--api-base", help="OpenAI-compatible API base URL.")
@@ -186,9 +186,9 @@ def _load_generation_defaults(matrix_path: Path) -> dict[str, Any]:
     matrix = load_experiment_matrix(matrix_path)
     inference = dict(matrix.inference)
     return {
-        "model": matrix.base_model.get("mvp", "Qwen/Qwen3.5-0.8B"),
-        "backend": str(inference.get("backend", "vllm")),
-        "api_base": str(inference.get("api_base", "http://127.0.0.1:8000/v1")),
+        "model": matrix.base_model.get("mvp", "models/Qwen3-0.6B"),
+        "backend": str(inference.get("backend", "sglang")),
+        "api_base": str(inference.get("api_base", "http://127.0.0.1:30000/v1")),
         "num_candidates": int(inference.get("num_candidates", 4)),
         "temperature": float(inference.get("temperature", 0.8)),
         "top_p": float(inference.get("top_p", 0.95)),
