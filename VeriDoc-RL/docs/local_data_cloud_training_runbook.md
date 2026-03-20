@@ -7,6 +7,13 @@
 - 在 WSL 里执行 `SFT / DPO / RL`
 - 在 WSL 里回评和对比
 
+对 `RTX 2060 6GB / SM75` 这类机器，当前默认版本岛已经收敛到：
+
+- `torch 2.6.0`
+- `sglang 0.4.6.post5`
+- `verl 0.4.1`
+- 默认训练精度 `float16`
+
 如果你只想照着一份执行清单把项目跑起来，这份文档比全局 `README.md` 更偏操作。
 
 ## 1. 先认清当前项目的框架分工
@@ -109,7 +116,8 @@ Failed to initialize NVML: GPU access blocked by the operating system
 
 如果你后续想单独做 `vLLM` 对比，再额外准备 `.venv-vllm`。
 
-对于 `RTX 2060 6GB` 这类老卡，当前仓库默认训练精度已经收敛到 `float16`，不要再把默认精度改回 `bfloat16`。
+对于 `RTX 2060 6GB` 这类老卡，当前仓库默认训练精度已经收敛到 `float16`，不要再把默认精度改回 `bfloat16`。  
+当前默认也不再追最新的 `SGLang / verl / torch`，而是优先使用对 `SM75` 更稳的版本岛。
 
 先确认一件事：`/usr/local/cuda` 必须先切到 `12.6.x` 或 `12.4.x`，再重建环境。
 
@@ -131,12 +139,15 @@ bash scripts/rebuild_wsl_envs.sh cu126
 
 - 也可以把 `cu126` 换成 `cu124`
 - 脚本会先检查 `/usr/local/cuda/version.json` 是否匹配目标大版本
-- `.venv-rl` 会安装 `torch 2.9.1 + verl 0.7.1 + sglang 0.5.9`
+- `.venv-rl` 会安装 `torch 2.6.0 + verl 0.4.1 + sglang 0.4.6.post5`
 - 默认不会碰 `.venv-vllm`
+- `SGLang` 会通过 FlashInfer 的 `torch2.6` wheel 源安装依赖
+- 对 `SM75` 卡，默认建议用 `--attention-backend triton --sampling-backend pytorch` 启服务
 - 如果你必须保留自己的 `torch + cu126/cu124` 组合，不要直接装 `vLLM` 预编译 wheel；它会带自己的 `torch` 依赖
 - 只有启用 `--with-vllm` 时，脚本才要求本机可用 `uv`
 - 如果 vLLM 编译过程报 `Killed` 或退出码 `137`，优先增大 WSL 的 `memory` 和 `swap`
 - `vLLM` 和 `verl` 不建议强行塞进同一个环境
+- `cu118` 先不作为默认路线；只有当前 `cu126/cu124 + torch2.6 + sglang0.4.6.post5` 仍然失败时，再把它当最后一级 fallback
 - 如果你只想先做 dry-run，也建议直接用 `.venv-rl`
 
 ### 4.5 快速验证依赖
@@ -213,7 +224,9 @@ source .venv-rl/bin/activate
 python -m sglang.launch_server \
   --model-path models/Qwen3-0.6B \
   --host 127.0.0.1 \
-  --port 30000
+  --port 30000 \
+  --attention-backend triton \
+  --sampling-backend pytorch
 ```
 
 再开一个终端做检查：
@@ -458,7 +471,17 @@ python scripts/compare_phase_reports.py \
 - `transformers` 负责训练和 checkpoint 本地推理
 - `verl + sglang` 负责 RL rollout
 
-### Q2. `trl_sft.py` 为什么不是 TRL 的 SFTTrainer
+### Q2. 为什么现在默认不是更高版本的 SGLang / verl / torch
+
+因为当前目标不是追最新版，而是先让 `RTX 2060 / SM75` 这种老卡本地跑通。  
+所以主路径先固定在：
+
+- `torch 2.6.0`
+- `sglang 0.4.6.post5`
+- `verl 0.4.1`
+- `float16`
+
+### Q3. `trl_sft.py` 为什么不是 TRL 的 SFTTrainer
 
 这个文件名保留了历史命名，但当前实现里用的是：
 
@@ -466,12 +489,12 @@ python scripts/compare_phase_reports.py \
 - `transformers.Trainer`
 - `peft`
 
-### Q3. 现在有没有 reward model
+### Q4. 现在有没有 reward model
 
 没有。  
 当前 RL 仍默认使用 verifier-based reward。
 
-### Q4. 第一次启动时要不要先把模型下载到本地
+### Q5. 第一次启动时要不要先把模型下载到本地
 
 不是必须。  
 当前仓库默认已经直接写成本地路径 `models/Qwen3-0.6B`；只有你手工改回 `Qwen/Qwen3-0.6B` 时，才会发生按需下载。

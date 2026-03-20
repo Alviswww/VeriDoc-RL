@@ -7,6 +7,8 @@
 - baseline candidate generation 默认走 `SGLang` 的 OpenAI-compatible API
 - 仓库主流程默认只需要 `.venv-rl`
 - `.venv-rl` 负责开发、测试、`prepare-only`、SFT、DPO、RL
+- 当前默认版本岛是 `torch 2.6.0 + sglang 0.4.6.post5 + verl 0.4.1`
+- 对 `RTX 2060 / SM75`，SGLang 默认建议加 `--attention-backend triton --sampling-backend pytorch`
 - `phase_a_sft` 当前实现是 `transformers.Trainer + datasets + peft`
 - `phase_b_dpo` 当前实现是 `TRL DPOTrainer`
 - `phase_c_grpo / phase_c_rloo` 当前桥接到 `verl`，默认 rollout backend 是 `sglang`

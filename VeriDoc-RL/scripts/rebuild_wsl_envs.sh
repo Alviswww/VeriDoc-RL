@@ -21,11 +21,12 @@ VLLM_TORCH_VERSION="${VLLM_TORCH_VERSION:-2.10.0}"
 VLLM_TORCHVISION_VERSION="${VLLM_TORCHVISION_VERSION:-0.25.0}"
 VLLM_TORCHAUDIO_VERSION="${VLLM_TORCHAUDIO_VERSION:-2.10.0}"
 
-RL_TORCH_VERSION="${RL_TORCH_VERSION:-2.9.1}"
-RL_TORCHVISION_VERSION="${RL_TORCHVISION_VERSION:-0.24.1}"
-RL_TORCHAUDIO_VERSION="${RL_TORCHAUDIO_VERSION:-2.9.1}"
-VERL_VERSION="${VERL_VERSION:-0.7.1}"
-SGLANG_VERSION="${SGLANG_VERSION:-0.5.9}"
+RL_TORCH_VERSION="${RL_TORCH_VERSION:-2.6.0}"
+RL_TORCHVISION_VERSION="${RL_TORCHVISION_VERSION:-0.21.0}"
+RL_TORCHAUDIO_VERSION="${RL_TORCHAUDIO_VERSION:-2.6.0}"
+VERL_VERSION="${VERL_VERSION:-0.4.1}"
+SGLANG_VERSION="${SGLANG_VERSION:-0.4.6.post5}"
+FLASHINFER_TORCH_SERIES="${FLASHINFER_TORCH_SERIES:-torch2.6}"
 
 usage() {
   cat <<'EOF'
@@ -147,7 +148,10 @@ install_rl_stack() {
     "$RL_TORCHVISION_VERSION" \
     "$RL_TORCHAUDIO_VERSION"
   venv_pip "$env_dir" install -e "$ROOT_DIR[dev,train]"
-  venv_pip "$env_dir" install pyarrow "verl==${VERL_VERSION}" "sglang==${SGLANG_VERSION}"
+  venv_pip "$env_dir" install \
+    --find-links "$FLASHINFER_FIND_LINKS" \
+    "sglang==${SGLANG_VERSION}"
+  venv_pip "$env_dir" install pyarrow "verl==${VERL_VERSION}"
   venv_pip "$env_dir" check
 }
 
@@ -176,10 +180,12 @@ case "$CUDA_FLAVOR" in
   cu126)
     CUDA_SERIES="12.6"
     TORCH_INDEX_URL="https://download.pytorch.org/whl/cu126"
+    FLASHINFER_FIND_LINKS="https://flashinfer.ai/whl/cu126/${FLASHINFER_TORCH_SERIES}/flashinfer-python/"
     ;;
   cu124)
     CUDA_SERIES="12.4"
     TORCH_INDEX_URL="https://download.pytorch.org/whl/cu124"
+    FLASHINFER_FIND_LINKS="https://flashinfer.ai/whl/cu124/${FLASHINFER_TORCH_SERIES}/flashinfer-python/"
     ;;
 esac
 
@@ -244,6 +250,7 @@ export PIP_CACHE_DIR
 export UV_CACHE_DIR
 
 info "Rebuilding primary local training environment against CUDA $CUDA_VERSION from $CUDA_HOME"
+info "Pinned compatibility island: torch ${RL_TORCH_VERSION} / sglang ${SGLANG_VERSION} / verl ${VERL_VERSION}"
 safe_rm_rf "$ROOT_DIR/.venv-rl"
 "$PYTHON_BIN" -m venv "$ROOT_DIR/.venv-rl"
 install_rl_stack "$ROOT_DIR/.venv-rl"
