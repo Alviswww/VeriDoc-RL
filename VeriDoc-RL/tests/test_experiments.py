@@ -13,6 +13,7 @@ from veridoc_rl.experiments.matrix import (
     load_experiment_matrix,
     main as experiment_plan_main,
 )
+from veridoc_rl.model_defaults import DEFAULT_BASELINE_MODEL
 
 
 def test_load_experiment_matrix_and_expand_plan() -> None:
@@ -30,7 +31,7 @@ def test_load_experiment_matrix_and_expand_plan() -> None:
         "sft_plus_rlvr_without_cross_field_consistency",
         "sft_plus_rlvr_without_checkbox_logic",
     ]
-    assert plan[0]["recommended_model"] == "models/Qwen3-0.6B"
+    assert plan[0]["recommended_model"] == DEFAULT_BASELINE_MODEL
     assert plan[2]["reward_profile"] == "rlvr"
     assert plan[3]["reward_profile"] == "rlvr_without_cross_field_consistency"
 

@@ -10,6 +10,7 @@ from urllib import error, request
 
 from veridoc_rl.evaluation import load_jsonl
 from veridoc_rl.experiments import load_experiment_matrix
+from veridoc_rl.model_defaults import DEFAULT_BASELINE_MODEL
 from veridoc_rl.path_utils import expand_env_and_user
 from veridoc_rl.predictions import parse_prediction_text
 from veridoc_rl.training.prompting import DEFAULT_SYSTEM_PROMPT, build_chat_messages
@@ -187,7 +188,7 @@ def _load_generation_defaults(matrix_path: Path) -> dict[str, Any]:
     matrix = load_experiment_matrix(matrix_path)
     inference = dict(matrix.inference)
     return {
-        "model": expand_env_and_user(str(matrix.base_model.get("mvp", "models/Qwen3-0.6B"))),
+        "model": expand_env_and_user(str(matrix.base_model.get("mvp", DEFAULT_BASELINE_MODEL))),
         "backend": str(inference.get("backend", "sglang")),
         "api_base": expand_env_and_user(
             str(inference.get("api_base", "http://127.0.0.1:30000/v1"))

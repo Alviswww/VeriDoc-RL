@@ -1,9 +1,9 @@
 run:
-  name: "qwen3_0p6_autodl"
+  name: "qwen3_1p7_autodl"
   output_root: "${VERIDOC_OUTPUT_ROOT}"
 
 model:
-  baseline: "${VERIDOC_MODEL_PATH}"
+  baseline: "${VERIDOC_MODEL_REF}"
   inference_backend: "sglang"
   inference_api_base: "${VERIDOC_API_BASE}"
   inference_api_key: "EMPTY"

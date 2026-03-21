@@ -1,9 +1,9 @@
 run:
-  name: "qwen3_0p6_mainline"
+  name: "qwen3_1p7_mainline"
   output_root: "outputs/pipelines"
 
 model:
-  baseline: "models/Qwen3-0.6B"
+  baseline: "Qwen/Qwen3-1.7B"
   inference_backend: "sglang"
   inference_api_base: "http://127.0.0.1:30000/v1"
   inference_api_key: "EMPTY"

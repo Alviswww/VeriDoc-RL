@@ -1,6 +1,6 @@
 # scripts
 
-这份索引现在按 **AutoDL 云端主线** 整理，不再把本地 WSL 作为默认路线。
+这份索引只保留 **AutoDL 云端主线**。
 
 ## 环境与服务
 
@@ -8,14 +8,17 @@
   - 默认重建两套环境
   - `.venv-train`：SFT / DPO / inference / tests
   - `.venv-rl`：`SGLang` serving + `verl`
+  - 支持第二个参数 `all | train | rl`
 - `bash scripts/start_sglang_server.sh`
   - 使用 `.venv-rl` 启动本地 `SGLang`
-  - 默认优先读取 `VERIDOC_MODEL_PATH`
-  - 支持 `MODEL_PATH / HOST / PORT / ATTENTION_BACKEND / SAMPLING_BACKEND` 环境变量覆盖
+  - 默认优先读取 `MODEL_REF / VERIDOC_MODEL_REF`
+  - 同时兼容旧变量 `MODEL_PATH / VERIDOC_MODEL_PATH`
+  - 支持 Hugging Face repo id 和本地模型目录
+  - 支持 `HOST / PORT / ATTENTION_BACKEND / SAMPLING_BACKEND` 环境变量覆盖
   - 额外的 SGLang 参数可以直接追加在脚本命令后面
-- `bash scripts/rebuild_wsl_envs.sh`
-  - 旧的本地 WSL 兼容脚本
-  - 不再是默认入口
+- `python scripts/prefetch_hf_model.py`
+  - 把 `Qwen/Qwen3-1.7B` 或其他 HF 模型快照下载到本地目录
+  - 适合做 AutoDL 本地缓存方案
 
 ## 数据与评测
 
@@ -57,10 +60,10 @@
 
 ## 云端推荐顺序
 
-1. `bash scripts/bootstrap_autodl_envs.sh auto`
+1. `bash scripts/bootstrap_autodl_envs.sh auto all`
 2. `source configs/autodl.env.example`
 3. `pytest`
 4. `python scripts/generate_sft_dataset.py`
 5. `bash scripts/start_sglang_server.sh`
-6. `python scripts/run_pipeline.py --spec-path configs/pipeline.autodl.qwen3_0p6.yaml --prepare-only`
-7. `python scripts/run_pipeline.py --spec-path configs/pipeline.autodl.qwen3_0p6.yaml`
+6. `python scripts/run_pipeline.py --spec-path configs/pipeline.autodl.qwen3_1p7.yaml --prepare-only`
+7. `python scripts/run_pipeline.py --spec-path configs/pipeline.autodl.qwen3_1p7.yaml`

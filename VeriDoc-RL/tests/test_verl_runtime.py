@@ -326,7 +326,7 @@ def test_prepare_runtime_cli_writes_dpo_launch_files(tmp_path: Path) -> None:
 def test_load_training_manifest_expands_env_vars(tmp_path: Path, monkeypatch) -> None:
     from veridoc_rl.training.runtime import load_training_manifest
 
-    monkeypatch.setenv("VERIDOC_MODEL_PATH", str(tmp_path / "models" / "Qwen3-0.6B"))
+    monkeypatch.setenv("VERIDOC_MODEL_REF", str(tmp_path / "models" / "Qwen3-1.7B"))
     monkeypatch.setenv("VERIDOC_TRAIN_PATH", str(tmp_path / "train.jsonl"))
     monkeypatch.setenv("VERIDOC_OUTPUT_PATH", str(tmp_path / "outputs" / "phase_a_sft"))
 
@@ -338,7 +338,7 @@ def test_load_training_manifest_expands_env_vars(tmp_path: Path, monkeypatch) ->
                 "phase": "phase_a_sft",
                 "backend": "multi",
                 "algorithm": "sft",
-                "base_model": "${VERIDOC_MODEL_PATH}",
+                "base_model": "${VERIDOC_MODEL_REF}",
                 "base_model_source": "baseline",
                 "train_data_path": "${VERIDOC_TRAIN_PATH}",
                 "eval_data_path": None,
@@ -359,6 +359,6 @@ def test_load_training_manifest_expands_env_vars(tmp_path: Path, monkeypatch) ->
 
     manifest = load_training_manifest(manifest_path)
 
-    assert manifest.base_model == str(tmp_path / "models" / "Qwen3-0.6B")
+    assert manifest.base_model == str(tmp_path / "models" / "Qwen3-1.7B")
     assert manifest.train_data_path == str(tmp_path / "train.jsonl")
     assert manifest.output_dir == str(tmp_path / "outputs" / "phase_a_sft")

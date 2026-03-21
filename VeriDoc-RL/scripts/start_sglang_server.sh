@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-$ROOT_DIR/.venv-rl/bin/python}"
-MODEL_PATH="${MODEL_PATH:-${VERIDOC_MODEL_PATH:-$ROOT_DIR/models/Qwen3-0.6B}}"
+MODEL_REF="${MODEL_REF:-${VERIDOC_MODEL_REF:-${MODEL_PATH:-${VERIDOC_MODEL_PATH:-Qwen/Qwen3-1.7B}}}}"
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-30000}"
 ATTENTION_BACKEND="${ATTENTION_BACKEND:-triton}"
@@ -16,15 +16,27 @@ if [[ ! -x "$PYTHON_BIN" ]]; then
   exit 1
 fi
 
-if [[ ! -e "$MODEL_PATH" ]]; then
-  echo "[start_sglang_server] Model path does not exist: $MODEL_PATH" >&2
-  echo "[start_sglang_server] Set MODEL_PATH or VERIDOC_MODEL_PATH before launching." >&2
+looks_like_local_model_ref() {
+  local value="$1"
+  case "$value" in
+    /*|./*|../*|~*|models/*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+if looks_like_local_model_ref "$MODEL_REF" && [[ ! -e "$MODEL_REF" ]]; then
+  echo "[start_sglang_server] Local model path does not exist: $MODEL_REF" >&2
+  echo "[start_sglang_server] Set MODEL_REF / VERIDOC_MODEL_REF to a valid directory, or use a Hugging Face repo id." >&2
   exit 1
 fi
 
 if [[ -x "$SERVER_BIN" ]]; then
   exec "$SERVER_BIN" serve \
-    --model-path "$MODEL_PATH" \
+    --model-path "$MODEL_REF" \
     --host "$HOST" \
     --port "$PORT" \
     --attention-backend "$ATTENTION_BACKEND" \
@@ -33,7 +45,7 @@ if [[ -x "$SERVER_BIN" ]]; then
 fi
 
 exec "$PYTHON_BIN" -m sglang.launch_server \
-  --model-path "$MODEL_PATH" \
+  --model-path "$MODEL_REF" \
   --host "$HOST" \
   --port "$PORT" \
   --attention-backend "$ATTENTION_BACKEND" \

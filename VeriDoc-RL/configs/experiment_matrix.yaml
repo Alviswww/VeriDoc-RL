@@ -3,8 +3,8 @@
   objective: "Verifier-guided RLVR for insurance application form extraction and rule validation"
 
 base_model:
-  mvp: "models/Qwen3-0.6B"
-  full: "models/Qwen3-0.6B"
+  mvp: "Qwen/Qwen3-1.7B"
+  full: "Qwen/Qwen3-1.7B"
 
 data:
   task_scope:
@@ -67,10 +67,10 @@ finetune:
     - "down_proj"
   load_in_4bit: true
   bnb_4bit_quant_type: "nf4"
-  bnb_4bit_compute_dtype: "float16"
+  bnb_4bit_compute_dtype: "bfloat16"
   bnb_4bit_use_double_quant: true
   precision:
-    torch_dtype: "float16"
+    torch_dtype: "bfloat16"
     attn_implementation: null
     gradient_checkpointing: true
 

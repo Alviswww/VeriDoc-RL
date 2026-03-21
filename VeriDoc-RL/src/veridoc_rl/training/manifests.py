@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from veridoc_rl.experiments import ExperimentMatrix, load_experiment_matrix
+from veridoc_rl.model_defaults import DEFAULT_BASELINE_MODEL
 
 DEFAULT_RUNTIME = {
     "backend": "multi",
@@ -457,8 +458,8 @@ def _resolve_phase_base_model(
     if legacy_model is not None:
         return legacy_model
     if phase_name == "phase_a_sft":
-        return matrix.base_model.get("mvp") or "models/Qwen3-0.6B"
-    return matrix.base_model.get("full") or matrix.base_model.get("mvp") or "models/Qwen3-0.6B"
+        return matrix.base_model.get("mvp") or DEFAULT_BASELINE_MODEL
+    return matrix.base_model.get("full") or matrix.base_model.get("mvp") or DEFAULT_BASELINE_MODEL
 
 
 def _extract_precision_config(matrix: ExperimentMatrix) -> dict[str, Any]:

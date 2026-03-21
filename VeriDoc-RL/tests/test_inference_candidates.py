@@ -5,6 +5,7 @@ from pathlib import Path
 
 import veridoc_rl.inference.candidates as candidates_module
 from veridoc_rl.inference.candidates import CandidateGenerationConfig, generate_candidates_for_records
+from veridoc_rl.model_defaults import DEFAULT_BASELINE_MODEL
 
 
 def _input_record() -> dict[str, object]:
@@ -45,7 +46,7 @@ def test_generate_candidates_for_records_parses_json_choices(monkeypatch) -> Non
         },
     )
     config = CandidateGenerationConfig(
-        model="models/Qwen3-0.6B",
+        model=DEFAULT_BASELINE_MODEL,
         backend="sglang",
         num_candidates=2,
     )
@@ -86,7 +87,7 @@ def test_candidate_cli_writes_jsonl(tmp_path: Path, monkeypatch) -> None:
             "--output-path",
             str(output_path),
             "--model",
-            "models/Qwen3-0.6B",
+            DEFAULT_BASELINE_MODEL,
             "--num-candidates",
             "1",
         ]
@@ -94,12 +95,12 @@ def test_candidate_cli_writes_jsonl(tmp_path: Path, monkeypatch) -> None:
 
     assert exit_code == 0
     payload = json.loads(output_path.read_text(encoding="utf-8").splitlines()[0])
-    assert payload["model"] == "models/Qwen3-0.6B"
+    assert payload["model"] == DEFAULT_BASELINE_MODEL
     assert payload["prediction"]["sample_id"] == "sample-1"
 
 
 def test_request_chat_candidates_rejects_unknown_backend() -> None:
-    config = CandidateGenerationConfig(model="models/Qwen3-0.6B", backend="unknown")
+    config = CandidateGenerationConfig(model=DEFAULT_BASELINE_MODEL, backend="unknown")
 
     try:
         candidates_module.request_chat_candidates(input_payload=_input_record()["input"], config=config)
@@ -116,7 +117,7 @@ def test_candidate_cli_expands_env_backed_model_and_api_base(
     input_path = tmp_path / "inputs.jsonl"
     output_path = tmp_path / "candidates.jsonl"
     input_path.write_text(json.dumps(_input_record(), ensure_ascii=False) + "\n", encoding="utf-8")
-    monkeypatch.setenv("VERIDOC_MODEL_PATH", str(tmp_path / "models" / "Qwen3-0.6B"))
+    monkeypatch.setenv("VERIDOC_MODEL_REF", str(tmp_path / "models" / "Qwen3-1.7B"))
     monkeypatch.setenv("VERIDOC_API_BASE", "http://127.0.0.1:30000/v1")
 
     seen: dict[str, str] = {}
@@ -144,7 +145,7 @@ def test_candidate_cli_expands_env_backed_model_and_api_base(
             "--output-path",
             str(output_path),
             "--model",
-            "${VERIDOC_MODEL_PATH}",
+            "${VERIDOC_MODEL_REF}",
             "--api-base",
             "${VERIDOC_API_BASE}",
             "--num-candidates",
@@ -154,5 +155,5 @@ def test_candidate_cli_expands_env_backed_model_and_api_base(
 
     assert exit_code == 0
     payload = json.loads(output_path.read_text(encoding="utf-8").splitlines()[0])
-    assert payload["model"] == str(tmp_path / "models" / "Qwen3-0.6B")
+    assert payload["model"] == str(tmp_path / "models" / "Qwen3-1.7B")
     assert seen["url"] == "http://127.0.0.1:30000/v1/chat/completions"
