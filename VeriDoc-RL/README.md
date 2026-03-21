@@ -18,10 +18,13 @@ VeriDoc-RL 是一个面向制式投保单结构化抽取的 verifier-guided post
 
 当前训练默认也同步切到了更适合 4090 / 5090 的 `bfloat16 + QLoRA` 组合。
 
-## 两套可执行方案
+## 执行文档
 
-推荐先看这两份文档，再决定是走在线模型还是本地快照：
+推荐先看 runbook，再决定是走在线模型还是本地快照：
 
+- 详细执行手册：[autodl_runbook.md](/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL/docs/autodl_runbook.md)
+  - 面向第一次接触仓库的使用者
+  - 覆盖无卡安装、开卡验证、SGLang 启动、数据生成、prepare-only、完整 pipeline
 - 方案 A，最快起步：[autodl_online_hf_setup.md](/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL/docs/autodl_online_hf_setup.md)
   - 直接使用 `Qwen/Qwen3-1.7B`
   - 优点是省磁盘、准备快、最适合第一次在 AutoDL 验证全链路
