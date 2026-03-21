@@ -5,35 +5,63 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CUDA_FLAVOR="${1:-auto}"
 INSTALL_TARGET="${2:-all}"
 
-TRAIN_ENV_DIR="${TRAIN_ENV_DIR:-$ROOT_DIR/.venv-train}"
-RL_ENV_DIR="${RL_ENV_DIR:-$ROOT_DIR/.venv-rl}"
-
-CACHE_ROOT="${AUTODL_CACHE_ROOT:-/root/autodl-tmp/.cache}"
-PIP_CACHE_DIR="${PIP_CACHE_DIR:-$CACHE_ROOT/pip}"
-UV_CACHE_DIR="${UV_CACHE_DIR:-$CACHE_ROOT/uv}"
-
 TORCH_VERSION="${TORCH_VERSION:-2.6.0}"
 TORCHVISION_VERSION="${TORCHVISION_VERSION:-0.21.0}"
 TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION:-2.6.0}"
 VERL_VERSION="${VERL_VERSION:-0.4.1}"
 SGLANG_VERSION="${SGLANG_VERSION:-0.4.6.post5}"
 SGLANG_INSTALL_SPEC="${SGLANG_INSTALL_SPEC:-sglang[srt]==${SGLANG_VERSION}}"
-FLASHINFER_TORCH_SERIES="${FLASHINFER_TORCH_SERIES:-torch2.6}"
+ALLOW_NO_GPU="${ALLOW_NO_GPU:-1}"
+
+default_work_root() {
+  if [[ -n "${VERIDOC_WORK_ROOT:-}" ]]; then
+    echo "$VERIDOC_WORK_ROOT"
+    return
+  fi
+  if [[ -d /root/autodl-tmp ]]; then
+    echo "/root/autodl-tmp/veridoc-rl"
+    return
+  fi
+  echo "$ROOT_DIR"
+}
+
+WORK_ROOT="${WORK_ROOT:-$(default_work_root)}"
+TRAIN_ENV_DIR="${TRAIN_ENV_DIR:-$WORK_ROOT/.venv-train}"
+RL_ENV_DIR="${RL_ENV_DIR:-$WORK_ROOT/.venv-rl}"
+
+CACHE_ROOT="${AUTODL_CACHE_ROOT:-$WORK_ROOT/.cache}"
+PIP_CACHE_DIR="${PIP_CACHE_DIR:-$CACHE_ROOT/pip}"
+UV_CACHE_DIR="${UV_CACHE_DIR:-$CACHE_ROOT/uv}"
+
+derive_flashinfer_torch_series() {
+  local version="${1:-$TORCH_VERSION}"
+  if [[ "$version" =~ ^([0-9]+)\.([0-9]+) ]]; then
+    echo "torch${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+    return
+  fi
+  echo "[bootstrap_autodl_envs] Error: Cannot derive FLASHINFER_TORCH_SERIES from TORCH_VERSION=$version" >&2
+  exit 1
+}
+
+FLASHINFER_TORCH_SERIES="${FLASHINFER_TORCH_SERIES:-$(derive_flashinfer_torch_series)}"
 
 usage() {
   cat <<'EOF'
 Usage: bash scripts/bootstrap_autodl_envs.sh [auto|cu126|cu124] [all|train|rl]
 
 Default behavior:
-  - rebuilds .venv-train for SFT / DPO / offline inference
-  - rebuilds .venv-rl for SGLang serving + verl rollout
+  - rebuilds TRAIN_ENV_DIR for SFT / DPO / offline inference
+  - rebuilds RL_ENV_DIR for SGLang serving + verl rollout
   - keeps training and RL-serving dependencies isolated
+  - prefers VERIDOC_WORK_ROOT or /root/autodl-tmp/veridoc-rl on AutoDL
+  - allows package installation without a ready GPU by default
 
 Examples:
   bash scripts/bootstrap_autodl_envs.sh
   bash scripts/bootstrap_autodl_envs.sh cu126 all
   bash scripts/bootstrap_autodl_envs.sh auto train
   PYTHON_BIN=python3.12 bash scripts/bootstrap_autodl_envs.sh auto rl
+  ALLOW_NO_GPU=0 bash scripts/bootstrap_autodl_envs.sh auto all
 EOF
 }
 
@@ -88,7 +116,10 @@ PY
 
 safe_rm_rf() {
   local target="$1"
-  if [[ -z "$target" || "$target" != "$ROOT_DIR/"* ]]; then
+  if [[ -z "$target" || "$target" == "/" ]]; then
+    die "Refusing to remove unsafe path: $target"
+  fi
+  if [[ "$target" != "$TRAIN_ENV_DIR" && "$target" != "$RL_ENV_DIR" ]]; then
     die "Refusing to remove unsafe path: $target"
   fi
   rm -rf "$target"
@@ -151,7 +182,39 @@ PY
     return
   fi
 
-  nvidia-smi | sed -n 's/.*CUDA Version: \([0-9][0-9.]*\).*/\1/p' | head -n 1
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: \([0-9][0-9.]*\).*/\1/p' | head -n 1 || true
+  fi
+}
+
+gpu_runtime_ready() {
+  command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1
+}
+
+validate_runtime_mode() {
+  if [[ "$ALLOW_NO_GPU" == "0" ]] && ! gpu_runtime_ready; then
+    die "nvidia-smi failed. AutoDL GPU instance is not ready."
+  fi
+}
+
+print_train_validation() {
+  local env_dir="$1"
+  if [[ "$GPU_RUNTIME_READY" == "1" ]]; then
+    "$(venv_python "$env_dir")" -c "import torch, transformers, trl, huggingface_hub; print('train-env', torch.__version__, torch.version.cuda, transformers.__version__, trl.__version__, huggingface_hub.__version__)"
+    return
+  fi
+
+  "$(venv_python "$env_dir")" -c "import torch, transformers, trl, huggingface_hub; print('train-env', torch.__version__, torch.version.cuda, transformers.__version__, trl.__version__, huggingface_hub.__version__, 'gpu-runtime-check=skipped')"
+}
+
+print_rl_validation() {
+  local env_dir="$1"
+  if [[ "$GPU_RUNTIME_READY" == "1" ]]; then
+    "$(venv_python "$env_dir")" -c "import torch, pyarrow, verl, sglang, fastapi, uvicorn, uvloop; print('rl-env', torch.__version__, torch.version.cuda, verl.__version__, sglang.__version__, fastapi.__version__, uvicorn.__version__)"
+    return
+  fi
+
+  "$(venv_python "$env_dir")" -c "from importlib import metadata; import torch, pyarrow; print('rl-env', torch.__version__, torch.version.cuda, pyarrow.__version__, metadata.version('verl'), metadata.version('sglang'), metadata.version('fastapi'), metadata.version('uvicorn'), metadata.version('uvloop'), 'gpu-runtime-check=skipped')"
 }
 
 resolve_cuda_flavor() {
@@ -205,7 +268,13 @@ validate_install_target "$INSTALL_TARGET"
 
 require_command_or_path "$PYTHON_BIN"
 require_command_or_path git
-require_command_or_path nvidia-smi
+
+validate_runtime_mode
+if gpu_runtime_ready; then
+  GPU_RUNTIME_READY="1"
+else
+  GPU_RUNTIME_READY="0"
+fi
 
 CUDA_FLAVOR="$(resolve_cuda_flavor "$CUDA_FLAVOR")"
 
@@ -220,10 +289,6 @@ case "$CUDA_FLAVOR" in
     ;;
 esac
 
-if ! nvidia-smi >/dev/null 2>&1; then
-  die "nvidia-smi failed. AutoDL GPU instance is not ready."
-fi
-
 if [[ -z "${CUDA_HOME:-}" && -d /usr/local/cuda ]]; then
   export CUDA_HOME="/usr/local/cuda"
 fi
@@ -233,32 +298,43 @@ export PIP_CACHE_DIR
 export UV_CACHE_DIR
 
 info "Using Python $PYTHON_BIN"
+info "Using work root $WORK_ROOT"
+info "Using train env $TRAIN_ENV_DIR"
+info "Using RL env $RL_ENV_DIR"
 info "Using CUDA flavor $CUDA_FLAVOR"
+info "Using flashinfer wheel series $FLASHINFER_TORCH_SERIES"
+if [[ "$GPU_RUNTIME_READY" == "1" ]]; then
+  info "GPU runtime check passed via nvidia-smi"
+else
+  warn "GPU runtime is not ready; package installation will continue and runtime validation is reduced."
+fi
 
 if [[ "$INSTALL_TARGET" == "all" || "$INSTALL_TARGET" == "train" ]]; then
   info "Building train env at $TRAIN_ENV_DIR"
   safe_rm_rf "$TRAIN_ENV_DIR"
+  mkdir -p "$(dirname "$TRAIN_ENV_DIR")"
   "$PYTHON_BIN" -m venv "$TRAIN_ENV_DIR"
   install_train_stack "$TRAIN_ENV_DIR"
-  "$(venv_python "$TRAIN_ENV_DIR")" -c "import torch, transformers, trl, huggingface_hub; print('train-env', torch.__version__, torch.version.cuda, transformers.__version__, trl.__version__, huggingface_hub.__version__)"
+  print_train_validation "$TRAIN_ENV_DIR"
 fi
 
 if [[ "$INSTALL_TARGET" == "all" || "$INSTALL_TARGET" == "rl" ]]; then
   info "Building RL/SGLang env at $RL_ENV_DIR"
   safe_rm_rf "$RL_ENV_DIR"
+  mkdir -p "$(dirname "$RL_ENV_DIR")"
   "$PYTHON_BIN" -m venv "$RL_ENV_DIR"
   install_rl_stack "$RL_ENV_DIR"
-  "$(venv_python "$RL_ENV_DIR")" -c "import torch, pyarrow, verl, sglang, fastapi, uvicorn, uvloop; print('rl-env', torch.__version__, torch.version.cuda, verl.__version__, sglang.__version__, fastapi.__version__, uvicorn.__version__)"
+  print_rl_validation "$RL_ENV_DIR"
 fi
 
 info "Bootstrap complete."
 if [[ "$INSTALL_TARGET" == "all" || "$INSTALL_TARGET" == "train" ]]; then
   info "Train env:"
-  info "  source .venv-train/bin/activate"
+  info "  source $TRAIN_ENV_DIR/bin/activate"
 fi
 if [[ "$INSTALL_TARGET" == "all" || "$INSTALL_TARGET" == "rl" ]]; then
   info "RL env:"
-  info "  source .venv-rl/bin/activate"
+  info "  source $RL_ENV_DIR/bin/activate"
   info "Start SGLang:"
   info "  bash scripts/start_sglang_server.sh"
 fi

@@ -6,11 +6,13 @@
 
 - `bash scripts/bootstrap_autodl_envs.sh`
   - 默认重建两套环境
+  - AutoDL 默认放到 `${VERIDOC_WORK_ROOT:-/root/autodl-tmp/veridoc-rl}` 下
   - `.venv-train`：SFT / DPO / inference / tests
   - `.venv-rl`：`SGLang` serving + `verl`
   - 支持第二个参数 `all | train | rl`
+  - 默认允许无卡安装；需要强制 GPU 就绪时可加 `ALLOW_NO_GPU=0`
 - `bash scripts/start_sglang_server.sh`
-  - 使用 `.venv-rl` 启动本地 `SGLang`
+  - 优先使用 `VERIDOC_RL_PYTHON_BIN`，否则回退到仓库内 `.venv-rl`
   - 默认优先读取 `MODEL_REF / VERIDOC_MODEL_REF`
   - 同时兼容旧变量 `MODEL_PATH / VERIDOC_MODEL_PATH`
   - 支持 Hugging Face repo id 和本地模型目录

@@ -14,7 +14,7 @@
 
 ```bash
 bash scripts/bootstrap_autodl_envs.sh auto all
-source .venv-train/bin/activate
+source /root/autodl-tmp/veridoc-rl/.venv-train/bin/activate
 ```
 
 如果你还没配置环境变量，先复制模板：
@@ -72,7 +72,7 @@ curl http://127.0.0.1:30000/v1/models
 ## 5. 生成 baseline candidates
 
 ```bash
-source .venv-train/bin/activate
+source "${VERIDOC_WORK_ROOT}/.venv-train/bin/activate"
 
 python scripts/generate_candidates.py \
   --input-path "${VERIDOC_SFT_GOLD_PATH}" \
@@ -121,6 +121,8 @@ python scripts/run_pipeline.py \
 
 /root/autodl-tmp/
   veridoc-rl/
+    .venv-train/
+    .venv-rl/
     outputs/
     pipelines/
 ```

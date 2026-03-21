@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-$ROOT_DIR/.venv-rl/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-${VERIDOC_RL_PYTHON_BIN:-$ROOT_DIR/.venv-rl/bin/python}}"
 MODEL_REF="${MODEL_REF:-${VERIDOC_MODEL_REF:-${MODEL_PATH:-${VERIDOC_MODEL_PATH:-Qwen/Qwen3-1.7B}}}}"
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-30000}"
@@ -12,7 +12,7 @@ SERVER_BIN="${SERVER_BIN:-$(dirname "$PYTHON_BIN")/sglang}"
 
 if [[ ! -x "$PYTHON_BIN" ]]; then
   echo "[start_sglang_server] Missing python executable: $PYTHON_BIN" >&2
-  echo "[start_sglang_server] Run bash scripts/bootstrap_autodl_envs.sh first." >&2
+  echo "[start_sglang_server] Run bash scripts/bootstrap_autodl_envs.sh first, or set VERIDOC_RL_PYTHON_BIN / PYTHON_BIN explicitly." >&2
   exit 1
 fi
 

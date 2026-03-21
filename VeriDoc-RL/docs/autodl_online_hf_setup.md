@@ -76,28 +76,31 @@ PYTHON_BIN=/path/to/python3.12 bash scripts/bootstrap_autodl_envs.sh auto all
 
 说明：
 
-- `all` 会同时重建 `.venv-train` 和 `.venv-rl`
+- `all` 会同时重建 `${VERIDOC_WORK_ROOT}/.venv-train` 和 `${VERIDOC_WORK_ROOT}/.venv-rl`
 - 只想先排查训练栈时，可以用 `auto train`
 - 只想单独排查 `SGLang + verl`，可以用 `auto rl`
+- 默认会把 venv 和 pip/uv cache 放到 `VERIDOC_WORK_ROOT` 下，避免把系统盘快速写满
+- 默认允许在无卡状态下完成安装；如果你想强制要求 GPU 已就绪，再加 `ALLOW_NO_GPU=0`
+- `FLASHINFER_TORCH_SERIES` 会跟随 `TORCH_VERSION` 自动推导；如果你手动改 `TORCH_VERSION`，一般不需要再单独改它
 
 ## 5. 验证安装
 
 ```bash
-source .venv-train/bin/activate
+source "${VERIDOC_WORK_ROOT}/.venv-train/bin/activate"
 python -c "import torch, transformers, trl; print(torch.cuda.is_available(), torch.__version__, transformers.__version__, trl.__version__)"
 pytest
 veridoc-rl-smoke
 ```
 
 ```bash
-source .venv-rl/bin/activate
+source "${VERIDOC_WORK_ROOT}/.venv-rl/bin/activate"
 python -c "import torch, pyarrow, verl, sglang; print(torch.cuda.is_available(), torch.__version__, verl.__version__, sglang.__version__)"
 ```
 
 ## 6. 准备数据
 
 ```bash
-source .venv-train/bin/activate
+source "${VERIDOC_WORK_ROOT}/.venv-train/bin/activate"
 
 python scripts/generate_sft_dataset.py \
   --count 200 \
@@ -136,7 +139,7 @@ curl http://127.0.0.1:30000/v1/models
 ## 8. 先跑 prepare-only
 
 ```bash
-source .venv-train/bin/activate
+source "${VERIDOC_WORK_ROOT}/.venv-train/bin/activate"
 
 python scripts/run_pipeline.py \
   --spec-path configs/pipeline.autodl.qwen3_1p7.yaml \
@@ -156,6 +159,6 @@ python scripts/run_pipeline.py \
   - 说明 `transformers` 太旧。仓库已经把下限提到 `4.51+`，请重新执行环境脚本。
 - `SGLang` 安装阶段失败
   - 先确认实例 CUDA 是 12.4 或 12.6。
-  - 再确认 `nvidia-smi` 与 `/usr/local/cuda` 都正常。
+  - 无卡安装阶段只需要 `/usr/local/cuda/version.json` 或显式传 `cu124 / cu126`；真正开卡运行前再确认 `nvidia-smi` 正常。
 - 第一次启动 `SGLang` 比较慢
   - 这是正常现象，因为它会先把模型缓存到 `HF_HOME`。

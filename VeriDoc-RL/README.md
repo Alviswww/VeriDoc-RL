@@ -7,7 +7,7 @@ VeriDoc-RL 是一个面向制式投保单结构化抽取的 verifier-guided post
 - `phase_a_sft`：`transformers + peft`
 - `phase_b_dpo`：`TRL DPOTrainer`
 - `phase_c_*`：`verl + SGLang`
-- 默认环境：`.venv-train` 和 `.venv-rl` 双环境拆分
+- 默认环境：`VERIDOC_WORK_ROOT` 下的 `.venv-train` 和 `.venv-rl` 双环境拆分
 
 ## 当前默认配置
 
@@ -42,7 +42,7 @@ cp configs/autodl.env.example /tmp/veridoc_autodl.env
 source /tmp/veridoc_autodl.env
 
 bash scripts/bootstrap_autodl_envs.sh auto all
-source .venv-train/bin/activate
+source "${VERIDOC_WORK_ROOT}/.venv-train/bin/activate"
 pytest
 veridoc-rl-smoke
 ```
@@ -52,7 +52,7 @@ veridoc-rl-smoke
 ```bash
 bash scripts/start_sglang_server.sh
 
-source .venv-train/bin/activate
+source "${VERIDOC_WORK_ROOT}/.venv-train/bin/activate"
 python scripts/run_pipeline.py \
   --spec-path configs/pipeline.autodl.qwen3_1p7.yaml \
   --prepare-only
@@ -61,11 +61,12 @@ python scripts/run_pipeline.py \
 ## 关键脚本
 
 - [bootstrap_autodl_envs.sh](/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL/scripts/bootstrap_autodl_envs.sh)
-  - 重建 `.venv-train` 和 `.venv-rl`
+  - 默认重建 `VERIDOC_WORK_ROOT` 下的 `.venv-train` 和 `.venv-rl`
   - 支持 `all | train | rl`
 - [start_sglang_server.sh](/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL/scripts/start_sglang_server.sh)
   - 支持 Hugging Face repo id 或本地模型目录
   - 优先读取 `MODEL_REF / VERIDOC_MODEL_REF`
+  - 同时兼容 `VERIDOC_RL_PYTHON_BIN`
 - [prefetch_hf_model.py](/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL/scripts/prefetch_hf_model.py)
   - 把 HF 模型快照固化到本地目录
 
