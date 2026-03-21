@@ -25,6 +25,8 @@ VeriDoc-RL 是一个面向制式投保单结构化抽取的 verifier-guided post
 - 详细执行手册：[autodl_runbook.md](/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL/docs/autodl_runbook.md)
   - 面向第一次接触仓库的使用者
   - 覆盖无卡安装、开卡验证、SGLang 启动、数据生成、prepare-only、完整 pipeline
+- Pipeline 深度解读：[pipeline_deep_dive.md](/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL/docs/pipeline_deep_dive.md)
+  - 详细解释数据结构、SFT / DPO / RL、文件映射、数据流图和资源消耗估算
 - 方案 A，最快起步：[autodl_online_hf_setup.md](/home/alvis/projects/llm-study/VeriDoc-RL/VeriDoc-RL/docs/autodl_online_hf_setup.md)
   - 直接使用 `Qwen/Qwen3-1.7B`
   - 优点是省磁盘、准备快、最适合第一次在 AutoDL 验证全链路
