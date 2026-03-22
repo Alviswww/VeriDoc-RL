@@ -26,11 +26,11 @@ def _write_dpo_corpus(path: Path) -> Path:
                 "system_prompt": "Return JSON only.",
                 "prompt": "Extract the fields.",
                 "chosen": (
-                    '{"sample_id":"sample-pref","fields":{"policyholder_name":"张三"},'
+                    '{"sample_id":"sample-pref","fields":{"投保人姓名":"张三"},'
                     '"validations":[]}'
                 ),
                 "rejected": (
-                    '{"sample_id":"sample-pref","fields":{"policyholder_name":""},'
+                    '{"sample_id":"sample-pref","fields":{"投保人姓名":""},'
                     '"validations":[]}'
                 ),
                 "reward_profile": "default",
@@ -51,16 +51,16 @@ def test_verl_reward_scores_valid_prediction() -> None:
     reference = {
         "sample_id": "sample-1",
         "fields": {
-            "policyholder_name": "张三",
-            "policyholder_phone": "13800138000",
+            "投保人姓名": "张三",
+            "投保人联系电话": "13800138000",
         },
         "validations": [],
     }
     prediction = {
         "sample_id": "sample-1",
         "fields": {
-            "policyholder_name": "张三",
-            "policyholder_phone": "13800138000",
+            "投保人姓名": "张三",
+            "投保人联系电话": "13800138000",
         },
         "validations": [],
     }

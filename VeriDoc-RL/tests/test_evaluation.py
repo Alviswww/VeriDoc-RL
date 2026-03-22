@@ -36,31 +36,31 @@ def _reference_record(
         "reference": {
             "sample_id": sample_id,
             "fields": {
-                "policyholder_name": "张三",
-                "policyholder_phone": "13800138000",
-                "policyholder_id_number": "440101199001011234",
-                "insured_name": "张三",
-                "insured_id_number": "440101199001011234",
-                "insured_birth_date": "1990-01-01",
-                "relation_policyholder_to_insured": "self",
-                "payment_mode": "annual",
-                "payment_period_years": 20,
-                "checkboxes": {
-                    "payment_mode.annual": True,
-                    "payment_mode.monthly": False,
-                    "payment_mode.auto_debit": False,
+                "投保人姓名": "张三",
+                "投保人联系电话": "13800138000",
+                "投保人证件号码": "440101199001011234",
+                "被保人姓名": "张三",
+                "被保人证件号码": "440101199001011234",
+                "被保人出生日期": "1990-01-01",
+                "投被保人关系": "本人",
+                "缴费方式": "年缴",
+                "缴费年期": 20,
+                "勾选项": {
+                    "缴费方式.年缴": True,
+                    "缴费方式.月缴": False,
+                    "缴费方式.自动扣款": False,
                 },
             },
             "validations": [
                 {
-                    "rule_id": "required.policyholder_phone",
+                    "rule_id": "格式.投保人联系电话",
                     "status": "pass",
-                    "message": "policyholder_phone is present",
+                    "message": "投保人联系电话格式合法。",
                 },
                 {
-                    "rule_id": "checkbox.payment_mode_exclusive",
+                    "rule_id": "勾选.缴费方式互斥",
                     "status": "pass",
-                    "message": "payment mode checkboxes are mutually exclusive",
+                    "message": "缴费方式勾选互斥。",
                 },
             ],
         },
@@ -69,8 +69,8 @@ def _reference_record(
 
 
 def test_field_metrics_handle_partial_match() -> None:
-    prediction_fields = {"policyholder_name": "张三", "policyholder_phone": "13800138000"}
-    reference_fields = {"policyholder_name": "张三", "policyholder_phone": "13700137000"}
+    prediction_fields = {"投保人姓名": "张三", "投保人联系电话": "13800138000"}
+    reference_fields = {"投保人姓名": "张三", "投保人联系电话": "13700137000"}
 
     metrics = compute_field_level_metrics(prediction_fields, reference_fields)
 
@@ -80,8 +80,8 @@ def test_field_metrics_handle_partial_match() -> None:
 
 
 def test_form_exact_match_normalizes_fields() -> None:
-    prediction_fields = {"policyholder_phone": "138-0013-8000"}
-    reference_fields = {"policyholder_phone": "13800138000"}
+    prediction_fields = {"投保人联系电话": "138-0013-8000"}
+    reference_fields = {"投保人联系电话": "13800138000"}
 
     assert compute_form_exact_match(prediction_fields, reference_fields) == 1.0
 
@@ -108,11 +108,11 @@ def test_invalid_json_rate_counts_schema_failures() -> None:
 
 def test_validation_match_rate_detects_rule_status_mismatch() -> None:
     prediction_validations = [
-        {"rule_id": "required.policyholder_phone", "status": "fail"},
+        {"rule_id": "格式.投保人联系电话", "status": "fail"},
     ]
     reference_validations = [
-        {"rule_id": "required.policyholder_phone", "status": "pass"},
-        {"rule_id": "checkbox.payment_mode_exclusive", "status": "pass"},
+        {"rule_id": "格式.投保人联系电话", "status": "pass"},
+        {"rule_id": "勾选.缴费方式互斥", "status": "pass"},
     ]
 
     assert compute_validation_match_rate(prediction_validations, reference_validations) == 0.0
@@ -121,23 +121,23 @@ def test_validation_match_rate_detects_rule_status_mismatch() -> None:
 def test_evaluate_prediction_returns_core_metrics() -> None:
     prediction = {
         "sample_id": "sample-1",
-        "fields": {"policyholder_phone": "138-0013-8000"},
+        "fields": {"投保人联系电话": "138-0013-8000"},
         "validations": [
             {
-                "rule_id": "required.policyholder_phone",
+                "rule_id": "格式.投保人联系电话",
                 "status": "pass",
-                "message": "policyholder_phone is present",
+                "message": "投保人联系电话格式合法。",
             }
         ],
     }
     reference = {
         "sample_id": "sample-1",
-        "fields": {"policyholder_phone": "13800138000"},
+        "fields": {"投保人联系电话": "13800138000"},
         "validations": [
             {
-                "rule_id": "required.policyholder_phone",
+                "rule_id": "格式.投保人联系电话",
                 "status": "pass",
-                "message": "policyholder_phone is present",
+                "message": "投保人联系电话格式合法。",
             }
         ],
     }
@@ -166,26 +166,26 @@ def test_evaluate_dataset_summarizes_buckets_and_taxonomy() -> None:
     failed_prediction = {
         "sample_id": "sample-fail",
         "fields": {
-            "policyholder_name": "张三",
-            "policyholder_phone": "",
-            "policyholder_id_number": "440101199001011234",
-            "insured_name": "张三",
-            "insured_id_number": "440101199001011234",
-            "insured_birth_date": "1990-01-01",
-            "relation_policyholder_to_insured": "self",
-            "payment_mode": "annual",
-            "payment_period_years": 20,
-            "checkboxes": {
-                "payment_mode.annual": True,
-                "payment_mode.monthly": True,
-                "payment_mode.auto_debit": False,
+            "投保人姓名": "张三",
+            "投保人联系电话": "",
+            "投保人证件号码": "440101199001011234",
+            "被保人姓名": "张三",
+            "被保人证件号码": "440101199001011234",
+            "被保人出生日期": "1990-01-01",
+            "投被保人关系": "本人",
+            "缴费方式": "年缴",
+            "缴费年期": 20,
+            "勾选项": {
+                "缴费方式.年缴": True,
+                "缴费方式.月缴": True,
+                "缴费方式.自动扣款": False,
             },
         },
         "validations": [
             {
-                "rule_id": "required.policyholder_phone",
+                "rule_id": "格式.投保人联系电话",
                 "status": "fail",
-                "message": "policyholder_phone is missing",
+                "message": "投保人联系电话缺失或格式不合法。",
             }
         ],
     }
@@ -198,7 +198,7 @@ def test_evaluate_dataset_summarizes_buckets_and_taxonomy() -> None:
                 "reference": failure_reference["reference"],
                 "metadata": failure_reference["metadata"],
                 "input": failure_reference["input"],
-                "context": {"perturbed_predictions": [{"fields": {"policyholder_name": "李四"}}]},
+                "context": {"perturbed_predictions": [{"fields": {"投保人姓名": "李四"}}]},
             },
             {
                 "prediction": passed_prediction,
@@ -225,7 +225,7 @@ def test_evaluate_dataset_summarizes_buckets_and_taxonomy() -> None:
     assert report.error_taxonomy["ocr_noise_vulnerability"]["count"] == 1
     assert len(report.failure_cases) == 1
     assert report.failure_cases[0].sample_id == "sample-fail"
-    assert "policyholder_phone" in report.failure_cases[0].missing_fields
+    assert "投保人联系电话" in report.failure_cases[0].missing_fields
     assert "missing_field" in report.failure_cases[0].taxonomy
 
 
@@ -243,30 +243,30 @@ def test_reporting_main_writes_report_and_case_export(tmp_path: Path) -> None:
         "prediction": {
             "sample_id": "sample-cli",
             "fields": {
-                "policyholder_name": "张三",
-                "policyholder_phone": "",
-                "policyholder_id_number": "440101199001011234",
-                "insured_name": "张三",
-                "insured_id_number": "440101199001011234",
-                "insured_birth_date": "1990-01-01",
-                "relation_policyholder_to_insured": "self",
-                "payment_mode": "annual",
-                "payment_period_years": 20,
-                "checkboxes": {
-                    "payment_mode.annual": True,
-                    "payment_mode.monthly": True,
-                    "payment_mode.auto_debit": False,
+                "投保人姓名": "张三",
+                "投保人联系电话": "",
+                "投保人证件号码": "440101199001011234",
+                "被保人姓名": "张三",
+                "被保人证件号码": "440101199001011234",
+                "被保人出生日期": "1990-01-01",
+                "投被保人关系": "本人",
+                "缴费方式": "年缴",
+                "缴费年期": 20,
+                "勾选项": {
+                    "缴费方式.年缴": True,
+                    "缴费方式.月缴": True,
+                    "缴费方式.自动扣款": False,
                 },
             },
             "validations": [
                 {
-                    "rule_id": "required.policyholder_phone",
+                    "rule_id": "格式.投保人联系电话",
                     "status": "fail",
-                    "message": "policyholder_phone is missing",
+                    "message": "投保人联系电话缺失或格式不合法。",
                 }
             ],
         },
-        "context": {"perturbed_predictions": [{"fields": {"policyholder_name": "李四"}}]},
+        "context": {"perturbed_predictions": [{"fields": {"投保人姓名": "李四"}}]},
     }
     reference_path = tmp_path / "reference.jsonl"
     prediction_path = tmp_path / "prediction.jsonl"

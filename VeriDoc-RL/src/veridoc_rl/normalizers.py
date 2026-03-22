@@ -5,6 +5,24 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from veridoc_rl.form_spec import (
+    FIELD_APPLICATION_DATE,
+    FIELD_BENEFICIARY_RATIO,
+    FIELD_COVERAGE_AMOUNT,
+    FIELD_CURRENCY,
+    FIELD_INSURED_BIRTH_DATE,
+    FIELD_PAYMENT_MODE,
+    FIELD_POLICYHOLDER_GENDER,
+    FIELD_POLICYHOLDER_ID_NUMBER,
+    FIELD_POLICYHOLDER_PHONE,
+    FIELD_RELATION,
+    GENDER_ALIASES,
+    PAYMENT_MODE_ALIASES,
+    PRODUCT_NAME_ALIASES,
+    RELATION_ALIASES,
+    canonicalize_field_name,
+)
+
 
 _DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%Y%m%d")
 _TRUE_VALUES = {"1", "true", "yes", "y", "checked", "selected", "on"}
@@ -99,17 +117,33 @@ def normalize_known_field(field_name: str, value: Any) -> Any | None:
     if value is None:
         return None
 
-    lowered_name = field_name.lower()
-    if "phone" in lowered_name:
+    canonical_name = canonicalize_field_name(field_name)
+    if canonical_name == FIELD_POLICYHOLDER_PHONE:
         return normalize_phone(value)
-    if lowered_name.endswith("id_number"):
+    if canonical_name == FIELD_POLICYHOLDER_ID_NUMBER or canonical_name.endswith("证件号码"):
         return normalize_id_number(value)
-    if lowered_name.endswith("date"):
+    if canonical_name in {FIELD_APPLICATION_DATE, FIELD_INSURED_BIRTH_DATE} or canonical_name.endswith("日期"):
         return normalize_date(value)
-    if lowered_name.endswith("amount") or lowered_name.startswith("premium_"):
+    if canonical_name == FIELD_COVERAGE_AMOUNT or "金额" in canonical_name or "保额" in canonical_name:
         return normalize_amount(value)
-    if lowered_name == "payment_mode" and isinstance(value, str):
-        return value.strip().lower().replace(" ", "_").replace("-", "_")
-    if lowered_name == "currency" and isinstance(value, str):
+    if canonical_name == FIELD_PAYMENT_MODE and isinstance(value, str):
+        normalized = re.sub(r"[\s-]+", "_", value.strip().lower())
+        return PAYMENT_MODE_ALIASES.get(normalized) or PAYMENT_MODE_ALIASES.get(value.strip()) or value.strip()
+    if canonical_name == FIELD_CURRENCY and isinstance(value, str):
         return value.strip().upper()
+    if canonical_name == FIELD_RELATION and isinstance(value, str):
+        normalized = value.strip().lower().replace(" ", "_").replace("-", "_")
+        return RELATION_ALIASES.get(normalized) or RELATION_ALIASES.get(value.strip()) or value.strip()
+    if canonical_name in {FIELD_POLICYHOLDER_GENDER, "被保人性别"} and isinstance(value, str):
+        normalized = value.strip().lower()
+        return GENDER_ALIASES.get(normalized) or GENDER_ALIASES.get(value.strip()) or value.strip()
+    if canonical_name == "产品名称" and isinstance(value, str):
+        normalized = value.strip().lower().replace(" ", "_").replace("-", "_")
+        return PRODUCT_NAME_ALIASES.get(normalized) or PRODUCT_NAME_ALIASES.get(value.strip()) or value.strip()
+    if canonical_name == FIELD_BENEFICIARY_RATIO:
+        if isinstance(value, (int, float)):
+            return str(int(value)) if float(value).is_integer() else str(value)
+        if isinstance(value, str):
+            normalized = value.strip().rstrip("%")
+            return normalized or None
     return None

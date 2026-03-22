@@ -7,7 +7,8 @@ from typing import Any
 
 DEFAULT_SYSTEM_PROMPT = (
     "你是保险投保单结构化抽取与规则校验助手。"
-    "请仅输出 JSON，对 OCR 结果做字段抽取并返回 validations。"
+    "请只输出一个 JSON 对象，不要输出思考过程、解释、代码块或额外文本。"
+    "请根据 OCR 结果提取中文字段，并返回中文规则校验结果。"
 )
 
 
@@ -24,6 +25,7 @@ def build_user_prompt(input_payload: Mapping[str, Any]) -> str:
     return "\n".join(
         [
             "任务: 根据 OCR token 结果提取投保单字段，并同时输出规则校验结果。",
+            "要求: 字段名和 rule_id 必须使用中文；不要输出 <think> 或任何解释文本。",
             f"sample_id: {sample_id}",
             f"form_type: {form_type}",
             f"pdf_page: {pdf_page}",

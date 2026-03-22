@@ -30,7 +30,7 @@ def test_generate_candidates_for_records_parses_json_choices(monkeypatch) -> Non
                     "message": {
                         "content": (
                             "```json\n"
-                            '{"sample_id":"sample-1","fields":{"policyholder_name":"张三"},"validations":[]}\n'
+                            '{"sample_id":"sample-1","fields":{"投保人姓名":"张三"},"validations":[]}\n'
                             "```"
                         )
                     }
@@ -38,7 +38,7 @@ def test_generate_candidates_for_records_parses_json_choices(monkeypatch) -> Non
                 {
                     "message": {
                         "content": (
-                            '{"sample_id":"sample-1","fields":{"policyholder_name":"李四"},"validations":[]}'
+                            '{"sample_id":"sample-1","fields":{"投保人姓名":"李四"},"validations":[]}'
                         )
                     }
                 },
@@ -55,8 +55,8 @@ def test_generate_candidates_for_records_parses_json_choices(monkeypatch) -> Non
 
     assert len(rows) == 2
     assert rows[0]["candidate_id"] == "sample-1::cand_0"
-    assert rows[0]["prediction"]["fields"]["policyholder_name"] == "张三"
-    assert rows[1]["prediction"]["fields"]["policyholder_name"] == "李四"
+    assert rows[0]["prediction"]["fields"]["投保人姓名"] == "张三"
+    assert rows[1]["prediction"]["fields"]["投保人姓名"] == "李四"
     assert rows[0]["backend"] == "sglang"
 
 
@@ -72,7 +72,7 @@ def test_candidate_cli_writes_jsonl(tmp_path: Path, monkeypatch) -> None:
                 {
                     "message": {
                         "content": (
-                            '{"sample_id":"sample-1","fields":{"policyholder_name":"张三"},"validations":[]}'
+                            '{"sample_id":"sample-1","fields":{"投保人姓名":"张三"},"validations":[]}'
                         )
                     }
                 }
@@ -129,7 +129,7 @@ def test_candidate_cli_expands_env_backed_model_and_api_base(
                 {
                     "message": {
                         "content": (
-                            '{"sample_id":"sample-1","fields":{"policyholder_name":"张三"},"validations":[]}'
+                            '{"sample_id":"sample-1","fields":{"投保人姓名":"张三"},"validations":[]}'
                         )
                     }
                 }

@@ -9,6 +9,10 @@ PORT="${PORT:-30000}"
 ATTENTION_BACKEND="${ATTENTION_BACKEND:-triton}"
 SAMPLING_BACKEND="${SAMPLING_BACKEND:-pytorch}"
 SERVER_BIN="${SERVER_BIN:-$(dirname "$PYTHON_BIN")/sglang}"
+ENABLE_LORA="${ENABLE_LORA:-0}"
+LORA_PATHS="${LORA_PATHS:-}"
+DISABLE_CUDA_GRAPH="${DISABLE_CUDA_GRAPH:-0}"
+DISABLE_RADIX_CACHE="${DISABLE_RADIX_CACHE:-0}"
 
 if [[ ! -x "$PYTHON_BIN" ]]; then
   echo "[start_sglang_server] Missing python executable: $PYTHON_BIN" >&2
@@ -34,20 +38,31 @@ if looks_like_local_model_ref "$MODEL_REF" && [[ ! -e "$MODEL_REF" ]]; then
   exit 1
 fi
 
-if [[ -x "$SERVER_BIN" ]]; then
-  exec "$SERVER_BIN" serve \
-    --model-path "$MODEL_REF" \
-    --host "$HOST" \
-    --port "$PORT" \
-    --attention-backend "$ATTENTION_BACKEND" \
-    --sampling-backend "$SAMPLING_BACKEND" \
-    "$@"
+SERVER_ARGS=(
+  --model-path "$MODEL_REF"
+  --host "$HOST"
+  --port "$PORT"
+  --attention-backend "$ATTENTION_BACKEND"
+  --sampling-backend "$SAMPLING_BACKEND"
+)
+
+if [[ "$ENABLE_LORA" == "1" ]]; then
+  SERVER_ARGS+=(--enable-lora)
+  if [[ -n "$LORA_PATHS" ]]; then
+    SERVER_ARGS+=(--lora-paths "$LORA_PATHS")
+  fi
 fi
 
-exec "$PYTHON_BIN" -m sglang.launch_server \
-  --model-path "$MODEL_REF" \
-  --host "$HOST" \
-  --port "$PORT" \
-  --attention-backend "$ATTENTION_BACKEND" \
-  --sampling-backend "$SAMPLING_BACKEND" \
-  "$@"
+if [[ "$DISABLE_CUDA_GRAPH" == "1" ]]; then
+  SERVER_ARGS+=(--disable-cuda-graph)
+fi
+
+if [[ "$DISABLE_RADIX_CACHE" == "1" ]]; then
+  SERVER_ARGS+=(--disable-radix-cache)
+fi
+
+if [[ -x "$SERVER_BIN" ]]; then
+  exec "$SERVER_BIN" serve "${SERVER_ARGS[@]}" "$@"
+fi
+
+exec "$PYTHON_BIN" -m sglang.launch_server "${SERVER_ARGS[@]}" "$@"

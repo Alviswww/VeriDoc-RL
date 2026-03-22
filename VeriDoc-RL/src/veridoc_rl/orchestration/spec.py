@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +37,13 @@ class GenerationConfig:
     top_p: float = 0.95
     max_new_tokens: int = 1024
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
+    disable_thinking: bool = True
+    extra_body: dict[str, Any] = field(default_factory=dict)
+    preference_source: str = "sft_adapter"
+    preference_model: str | None = None
+    preference_adapter_name: str = "sft_adapter"
+    preference_disable_thinking: bool = True
+    preference_extra_body: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True, frozen=True)
@@ -45,6 +52,7 @@ class PipelineConfig:
     enable_sft: bool = True
     enable_dpo: bool = True
     enable_rl: bool = True
+    enable_post_train_eval: bool = False
     rl_algorithm: str = "grpo"
 
 
@@ -109,12 +117,24 @@ def load_pipeline_spec(path: Path) -> PipelineSpec:
             top_p=float(generation_payload.get("top_p", 0.95)),
             max_new_tokens=int(generation_payload.get("max_new_tokens", 1024)),
             system_prompt=str(generation_payload.get("system_prompt", DEFAULT_SYSTEM_PROMPT)),
+            disable_thinking=bool(generation_payload.get("disable_thinking", True)),
+            extra_body=dict(_optional_mapping(generation_payload.get("extra_body")) or {}),
+            preference_source=str(generation_payload.get("preference_source", "sft_adapter")),
+            preference_model=(
+                expand_env_and_user(str(generation_payload["preference_model"]))
+                if generation_payload.get("preference_model") is not None
+                else None
+            ),
+            preference_adapter_name=str(generation_payload.get("preference_adapter_name", "sft_adapter")),
+            preference_disable_thinking=bool(generation_payload.get("preference_disable_thinking", True)),
+            preference_extra_body=dict(_optional_mapping(generation_payload.get("preference_extra_body")) or {}),
         ),
         pipeline=PipelineConfig(
             enable_baseline_eval=bool(pipeline_payload.get("enable_baseline_eval", True)),
             enable_sft=bool(pipeline_payload.get("enable_sft", True)),
             enable_dpo=bool(pipeline_payload.get("enable_dpo", True)),
             enable_rl=bool(pipeline_payload.get("enable_rl", True)),
+            enable_post_train_eval=bool(pipeline_payload.get("enable_post_train_eval", False)),
             rl_algorithm=str(pipeline_payload.get("rl_algorithm", "grpo")),
         ),
         execution=ExecutionConfig(

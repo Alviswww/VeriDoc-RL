@@ -32,6 +32,7 @@ class InferenceConfig:
     do_sample: bool = False
     adapter_config: dict[str, Any] | None = None
     precision_config: dict[str, Any] | None = None
+    disable_thinking: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -173,7 +174,7 @@ def _generate_prediction_text(
         input_payload,
         system_prompt=config.system_prompt,
     )
-    prompt_text = _render_generation_prompt(messages, tokenizer)
+    prompt_text = _render_generation_prompt(messages, tokenizer, disable_thinking=config.disable_thinking)
     tokenized = tokenizer(prompt_text, return_tensors="pt")
     tokenized = {
         key: value.to(model.device) if hasattr(value, "to") else value
@@ -195,14 +196,23 @@ def _generate_prediction_text(
     return tokenizer.decode(completion_ids, skip_special_tokens=True).strip()
 
 
-def _render_generation_prompt(messages: Sequence[Mapping[str, Any]], tokenizer: Any) -> str:
+def _render_generation_prompt(
+    messages: Sequence[Mapping[str, Any]],
+    tokenizer: Any,
+    *,
+    disable_thinking: bool,
+) -> str:
     if hasattr(tokenizer, "apply_chat_template"):
         try:
+            kwargs: dict[str, Any] = {}
+            if disable_thinking:
+                kwargs["chat_template_kwargs"] = {"enable_thinking": False}
             return str(
                 tokenizer.apply_chat_template(
                     list(messages),
                     tokenize=False,
                     add_generation_prompt=True,
+                    **kwargs,
                 )
             )
         except Exception:

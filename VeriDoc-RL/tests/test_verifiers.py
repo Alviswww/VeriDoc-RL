@@ -16,26 +16,26 @@ def _reference_payload() -> dict[str, object]:
     return {
         "sample_id": "sample-1",
         "fields": {
-            "policyholder_name": "张三",
-            "policyholder_phone": "13800138000",
-            "policyholder_id_number": "440101199001011234",
-            "insured_name": "张三",
-            "insured_id_number": "440101199001011234",
-            "insured_birth_date": "1990-01-01",
-            "relation_policyholder_to_insured": "self",
-            "payment_mode": "annual",
-            "payment_period_years": 20,
-            "checkboxes": {
-                "payment_mode.annual": True,
-                "payment_mode.monthly": False,
-                "payment_mode.auto_debit": False,
+            "投保人姓名": "张三",
+            "投保人联系电话": "13800138000",
+            "投保人证件号码": "440101199001011234",
+            "被保人姓名": "张三",
+            "被保人证件号码": "440101199001011234",
+            "被保人出生日期": "1990-01-01",
+            "投被保人关系": "本人",
+            "缴费方式": "年缴",
+            "缴费年期": 20,
+            "勾选项": {
+                "缴费方式.年缴": True,
+                "缴费方式.月缴": False,
+                "缴费方式.自动扣款": False,
             },
         },
         "validations": [
             {
-                "rule_id": "required.policyholder_name",
+                "rule_id": "必填.投保人姓名",
                 "status": "pass",
-                "message": "policyholder_name is present",
+                "message": "投保人姓名已填写。",
             }
         ],
     }
@@ -52,7 +52,7 @@ def test_field_match_verifier_uses_normalization() -> None:
     prediction = _reference_payload()
     prediction["fields"] = {
         **prediction["fields"],
-        "policyholder_phone": "138-0013-8000",
+        "投保人联系电话": "138-0013-8000",
     }
 
     result = FieldMatchVerifier().verify(prediction=prediction, reference=_reference_payload())
@@ -65,44 +65,44 @@ def test_normalization_verifier_flags_non_canonical_values() -> None:
     prediction = _reference_payload()
     prediction["fields"] = {
         **prediction["fields"],
-        "policyholder_phone": "138-0013-8000",
+        "投保人联系电话": "138-0013-8000",
     }
 
     result = NormalizationVerifier().verify(prediction=prediction)
 
     assert result.passed is False
     assert result.score < 1.0
-    assert "policyholder_phone" in result.details["invalid_fields"]
+    assert "投保人联系电话" in result.details["invalid_fields"]
 
 
 def test_cross_field_consistency_verifier_detects_birth_date_mismatch() -> None:
     prediction = _reference_payload()
     prediction["fields"] = {
         **prediction["fields"],
-        "insured_birth_date": "1991-01-01",
+        "被保人出生日期": "1991-01-01",
     }
 
     result = CrossFieldConsistencyVerifier().verify(prediction=prediction)
 
     assert result.passed is False
-    assert "birth_date_vs_id_number" in result.details["failed_checks"]
+    assert "出生日期与证件号码一致" in result.details["failed_checks"]
 
 
 def test_checkbox_logic_verifier_detects_conflicting_selection() -> None:
     prediction = _reference_payload()
     prediction["fields"] = {
         **prediction["fields"],
-        "checkboxes": {
-            "payment_mode.annual": True,
-            "payment_mode.monthly": True,
-            "payment_mode.auto_debit": False,
+        "勾选项": {
+            "缴费方式.年缴": True,
+            "缴费方式.月缴": True,
+            "缴费方式.自动扣款": False,
         },
     }
 
     result = CheckboxLogicVerifier().verify(prediction=prediction)
 
     assert result.passed is False
-    assert "payment_mode_exclusive" in result.details["failed_checks"]
+    assert "缴费方式互斥" in result.details["failed_checks"]
 
 
 def test_ocr_robustness_verifier_scores_perturbed_predictions() -> None:

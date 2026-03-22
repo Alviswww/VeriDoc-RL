@@ -5,13 +5,18 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CUDA_FLAVOR="${1:-auto}"
 INSTALL_TARGET="${2:-all}"
 
-TORCH_VERSION="${TORCH_VERSION:-2.6.0}"
-TORCHVISION_VERSION="${TORCHVISION_VERSION:-0.21.0}"
-TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION:-2.6.0}"
+TRAIN_TORCH_VERSION="${TRAIN_TORCH_VERSION:-2.5.1}"
+TRAIN_TORCHVISION_VERSION="${TRAIN_TORCHVISION_VERSION:-0.20.1}"
+TRAIN_TORCHAUDIO_VERSION="${TRAIN_TORCHAUDIO_VERSION:-2.5.1}"
+RL_TORCH_VERSION="${RL_TORCH_VERSION:-2.6.0}"
+RL_TORCHVISION_VERSION="${RL_TORCHVISION_VERSION:-0.21.0}"
+RL_TORCHAUDIO_VERSION="${RL_TORCHAUDIO_VERSION:-2.6.0}"
 VERL_VERSION="${VERL_VERSION:-0.4.1}"
 SGLANG_VERSION="${SGLANG_VERSION:-0.4.6.post5}"
 SGLANG_INSTALL_SPEC="${SGLANG_INSTALL_SPEC:-sglang[srt]==${SGLANG_VERSION}}"
 ALLOW_NO_GPU="${ALLOW_NO_GPU:-1}"
+TRAIN_REQUIREMENTS_PATH="${TRAIN_REQUIREMENTS_PATH:-$ROOT_DIR/requirements/autodl.train.txt}"
+RL_REQUIREMENTS_PATH="${RL_REQUIREMENTS_PATH:-$ROOT_DIR/requirements/autodl.rl.txt}"
 
 default_work_root() {
   if [[ -n "${VERIDOC_WORK_ROOT:-}" ]]; then
@@ -34,7 +39,7 @@ PIP_CACHE_DIR="${PIP_CACHE_DIR:-$CACHE_ROOT/pip}"
 UV_CACHE_DIR="${UV_CACHE_DIR:-$CACHE_ROOT/uv}"
 
 derive_flashinfer_torch_series() {
-  local version="${1:-$TORCH_VERSION}"
+  local version="${1:-$RL_TORCH_VERSION}"
   if [[ "$version" =~ ^([0-9]+)\.([0-9]+) ]]; then
     echo "torch${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
     return
@@ -43,7 +48,7 @@ derive_flashinfer_torch_series() {
   exit 1
 }
 
-FLASHINFER_TORCH_SERIES="${FLASHINFER_TORCH_SERIES:-$(derive_flashinfer_torch_series)}"
+FLASHINFER_TORCH_SERIES="${FLASHINFER_TORCH_SERIES:-$(derive_flashinfer_torch_series "$RL_TORCH_VERSION")}"
 
 usage() {
   cat <<'EOF'
@@ -143,30 +148,31 @@ install_base_tooling() {
 
 install_torch_stack() {
   local env_dir="$1"
+  local torch_version="$2"
+  local torchvision_version="$3"
+  local torchaudio_version="$4"
   venv_pip "$env_dir" install \
     --index-url "$TORCH_INDEX_URL" \
-    "torch==${TORCH_VERSION}" \
-    "torchvision==${TORCHVISION_VERSION}" \
-    "torchaudio==${TORCHAUDIO_VERSION}"
+    "torch==${torch_version}" \
+    "torchvision==${torchvision_version}" \
+    "torchaudio==${torchaudio_version}"
 }
 
 install_train_stack() {
   local env_dir="$1"
   install_base_tooling "$env_dir"
-  install_torch_stack "$env_dir"
-  venv_pip "$env_dir" install -e "$ROOT_DIR[dev,train]"
+  install_torch_stack "$env_dir" "$TRAIN_TORCH_VERSION" "$TRAIN_TORCHVISION_VERSION" "$TRAIN_TORCHAUDIO_VERSION"
+  venv_pip "$env_dir" install -r "$TRAIN_REQUIREMENTS_PATH"
+  venv_pip "$env_dir" install -e "$ROOT_DIR"
   venv_pip "$env_dir" check
 }
 
 install_rl_stack() {
   local env_dir="$1"
   install_base_tooling "$env_dir"
-  install_torch_stack "$env_dir"
-  venv_pip "$env_dir" install -e "$ROOT_DIR[dev]"
-  venv_pip "$env_dir" install \
-    --find-links "$FLASHINFER_FIND_LINKS" \
-    "$SGLANG_INSTALL_SPEC"
-  venv_pip "$env_dir" install pyarrow "verl==${VERL_VERSION}"
+  install_torch_stack "$env_dir" "$RL_TORCH_VERSION" "$RL_TORCHVISION_VERSION" "$RL_TORCHAUDIO_VERSION"
+  venv_pip "$env_dir" install --find-links "$FLASHINFER_FIND_LINKS" -r "$RL_REQUIREMENTS_PATH"
+  venv_pip "$env_dir" install -e "$ROOT_DIR"
   venv_pip "$env_dir" check
 }
 

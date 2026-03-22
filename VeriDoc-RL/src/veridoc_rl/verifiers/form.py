@@ -1,8 +1,39 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
 
+from veridoc_rl.form_spec import (
+    CHECKBOX_AUTO_DEBIT,
+    CHECKBOX_PAYMENT_ANNUAL,
+    CHECKBOX_PAYMENT_MONTHLY,
+    CHECKBOX_PAYMENT_QUARTERLY,
+    CHECKBOX_PAYMENT_SEMI_ANNUAL,
+    CHECKBOX_PAYMENT_SINGLE,
+    FIELD_APPLICATION_DATE,
+    FIELD_AUTO_DEBIT_ACCOUNT,
+    FIELD_BENEFICIARY_RATIO,
+    FIELD_CHECKBOXES,
+    FIELD_INSURED_BIRTH_DATE,
+    FIELD_INSURED_ID_NUMBER,
+    FIELD_PAYMENT_MODE,
+    FIELD_PAYMENT_PERIOD_YEARS,
+    FIELD_POLICYHOLDER_ID_NUMBER,
+    FIELD_PRODUCT_NAME,
+    FIELD_RELATION,
+    PAYMENT_MODE_ANNUAL,
+    PAYMENT_MODE_MONTHLY,
+    PAYMENT_MODE_QUARTERLY,
+    PAYMENT_MODE_SEMI_ANNUAL,
+    PAYMENT_MODE_SINGLE,
+    RELATION_CHILD,
+    RELATION_EMPLOYEE,
+    RELATION_OTHER,
+    RELATION_PARENT,
+    RELATION_SELF,
+    RELATION_SPOUSE,
+    canonicalize_fields,
+)
 from veridoc_rl.normalizers import (
     extract_birth_date_from_id_number,
     normalize_checkbox_value,
@@ -49,9 +80,9 @@ class FieldMatchVerifier(BaseVerifier):
                 details={"reason": "missing_reference"},
             )
 
-        prediction_fields = prediction.get("fields")
-        reference_fields = reference.get("fields")
-        if not isinstance(prediction_fields, Mapping) or not isinstance(reference_fields, Mapping):
+        prediction_fields = _extract_fields(prediction)
+        reference_fields = _extract_fields(reference)
+        if prediction_fields is None or reference_fields is None:
             return VerificationResult(
                 passed=False,
                 score=0.0,
@@ -65,10 +96,7 @@ class FieldMatchVerifier(BaseVerifier):
         for field_name, expected_value in reference_fields.items():
             total += 1
             actual_value = prediction_fields.get(field_name)
-            if _canonicalize_field_value(field_name, actual_value) == _canonicalize_field_value(
-                field_name,
-                expected_value,
-            ):
+            if _canonicalize_field_value(field_name, actual_value) == _canonicalize_field_value(field_name, expected_value):
                 matched += 1
             else:
                 mismatched.append(field_name)
@@ -91,8 +119,8 @@ class NormalizationVerifier(BaseVerifier):
         reference: Mapping[str, Any] | None = None,
         context: Mapping[str, Any] | None = None,
     ) -> VerificationResult:
-        prediction_fields = prediction.get("fields")
-        if not isinstance(prediction_fields, Mapping):
+        prediction_fields = _extract_fields(prediction)
+        if prediction_fields is None:
             return VerificationResult(
                 passed=False,
                 score=0.0,
@@ -135,8 +163,8 @@ class CrossFieldConsistencyVerifier(BaseVerifier):
         reference: Mapping[str, Any] | None = None,
         context: Mapping[str, Any] | None = None,
     ) -> VerificationResult:
-        prediction_fields = prediction.get("fields")
-        if not isinstance(prediction_fields, Mapping):
+        prediction_fields = _extract_fields(prediction)
+        if prediction_fields is None:
             return VerificationResult(
                 passed=False,
                 score=0.0,
@@ -145,10 +173,10 @@ class CrossFieldConsistencyVerifier(BaseVerifier):
             )
 
         checks: dict[str, bool | None] = {
-            "birth_date_vs_id_number": _check_birth_date_vs_id(prediction_fields),
-            "beneficiary_ratio_sum": _check_beneficiary_ratio_sum(prediction_fields),
-            "policyholder_insured_relation": _check_relation(prediction_fields, context),
-            "product_payment_combo": _check_product_payment_combo(prediction_fields, context),
+            "出生日期与证件号码一致": _check_birth_date_vs_id(prediction_fields),
+            "受益比例合计": _check_beneficiary_ratio_sum(prediction_fields),
+            "投被保人关系": _check_relation(prediction_fields, context),
+            "产品缴费组合": _check_product_payment_combo(prediction_fields, context),
         }
         applicable = {name: passed for name, passed in checks.items() if passed is not None}
         passed_count = sum(1 for passed in applicable.values() if passed)
@@ -171,8 +199,8 @@ class CheckboxLogicVerifier(BaseVerifier):
         reference: Mapping[str, Any] | None = None,
         context: Mapping[str, Any] | None = None,
     ) -> VerificationResult:
-        prediction_fields = prediction.get("fields")
-        if not isinstance(prediction_fields, Mapping):
+        prediction_fields = _extract_fields(prediction)
+        if prediction_fields is None:
             return VerificationResult(
                 passed=False,
                 score=0.0,
@@ -181,8 +209,8 @@ class CheckboxLogicVerifier(BaseVerifier):
             )
 
         checks: dict[str, bool | None] = {
-            "payment_mode_exclusive": _check_payment_mode_exclusive(prediction_fields),
-            "auto_debit_requires_account": _check_auto_debit_account(prediction_fields),
+            "缴费方式互斥": _check_payment_mode_exclusive(prediction_fields),
+            "自动扣款需账户": _check_auto_debit_account(prediction_fields),
         }
         applicable = {name: passed for name, passed in checks.items() if passed is not None}
         passed_count = sum(1 for passed in applicable.values() if passed)
@@ -205,8 +233,8 @@ class OCRRobustnessVerifier(BaseVerifier):
         reference: Mapping[str, Any] | None = None,
         context: Mapping[str, Any] | None = None,
     ) -> VerificationResult:
-        prediction_fields = prediction.get("fields")
-        if not isinstance(prediction_fields, Mapping):
+        prediction_fields = _extract_fields(prediction)
+        if prediction_fields is None:
             return VerificationResult(
                 passed=False,
                 score=0.0,
@@ -225,8 +253,8 @@ class OCRRobustnessVerifier(BaseVerifier):
 
         stable = 0
         for item in perturbed_predictions:
-            candidate_fields = item.get("fields", {}) if isinstance(item, Mapping) else {}
-            if not isinstance(candidate_fields, Mapping):
+            candidate_fields = _extract_fields(item) if isinstance(item, Mapping) else None
+            if candidate_fields is None:
                 continue
             if _canonicalize_nested(prediction_fields) == _canonicalize_nested(candidate_fields):
                 stable += 1
@@ -237,6 +265,13 @@ class OCRRobustnessVerifier(BaseVerifier):
             name=self.name,
             details={"stable_predictions": stable, "total_predictions": len(perturbed_predictions)},
         )
+
+
+def _extract_fields(payload: Mapping[str, Any]) -> dict[str, Any] | None:
+    fields = payload.get("fields")
+    if not isinstance(fields, Mapping):
+        return None
+    return canonicalize_fields(fields)
 
 
 def _canonicalize_field_value(field_name: str, value: Any) -> Any:
@@ -255,10 +290,10 @@ def _canonicalize_nested(value: Any) -> Any:
 
 
 def _check_birth_date_vs_id(fields: Mapping[str, Any]) -> bool | None:
-    birth_date = fields.get("insured_birth_date") or fields.get("policyholder_birth_date")
-    id_number = fields.get("insured_id_number") or fields.get("policyholder_id_number")
+    birth_date = fields.get(FIELD_INSURED_BIRTH_DATE)
+    id_number = fields.get(FIELD_INSURED_ID_NUMBER) or fields.get(FIELD_POLICYHOLDER_ID_NUMBER)
     normalized_id = normalize_id_number(id_number)
-    normalized_birth = normalize_known_field("insured_birth_date", birth_date)
+    normalized_birth = normalize_known_field(FIELD_INSURED_BIRTH_DATE, birth_date)
     if normalized_id is None or normalized_birth is None:
         return None
     return extract_birth_date_from_id_number(normalized_id) == normalized_birth
@@ -280,15 +315,8 @@ def _parse_ratio(value: Any) -> float | None:
 
 def _extract_beneficiary_ratios(fields: Mapping[str, Any]) -> list[float]:
     ratios: list[float] = []
-    beneficiaries = fields.get("beneficiaries")
-    if isinstance(beneficiaries, list):
-        for item in beneficiaries:
-            if isinstance(item, Mapping):
-                ratio = _parse_ratio(item.get("ratio"))
-                if ratio is not None:
-                    ratios.append(ratio)
-    direct_ratio = _parse_ratio(fields.get("beneficiary_ratio"))
-    if direct_ratio is not None and not ratios:
+    direct_ratio = _parse_ratio(fields.get(FIELD_BENEFICIARY_RATIO))
+    if direct_ratio is not None:
         ratios.append(direct_ratio)
     return ratios
 
@@ -301,61 +329,72 @@ def _check_beneficiary_ratio_sum(fields: Mapping[str, Any]) -> bool | None:
 
 
 def _check_relation(fields: Mapping[str, Any], context: Mapping[str, Any] | None) -> bool | None:
-    relation = fields.get("relation_policyholder_to_insured")
+    relation = normalize_known_field(FIELD_RELATION, fields.get(FIELD_RELATION))
     if relation is None:
         return None
+    default_relations = [
+        RELATION_SELF,
+        RELATION_SPOUSE,
+        RELATION_CHILD,
+        RELATION_PARENT,
+        RELATION_EMPLOYEE,
+        RELATION_OTHER,
+    ]
     allowed_relations = {
-        item.lower()
-        for item in (context or {}).get(
-            "allowed_relations",
-            ["self", "spouse", "child", "parent", "employee", "other"],
-        )
+        normalize_known_field(FIELD_RELATION, item)
+        for item in (context or {}).get("allowed_relations", default_relations)
     }
-    return str(relation).strip().lower() in allowed_relations
+    return relation in allowed_relations
 
 
 def _check_product_payment_combo(
     fields: Mapping[str, Any],
     context: Mapping[str, Any] | None,
 ) -> bool | None:
-    product_name = fields.get("product_name")
-    payment_mode = normalize_known_field("payment_mode", fields.get("payment_mode"))
-    payment_period = fields.get("payment_period_years")
+    product_name = fields.get(FIELD_PRODUCT_NAME)
+    payment_mode = normalize_known_field(FIELD_PAYMENT_MODE, fields.get(FIELD_PAYMENT_MODE))
+    payment_period = fields.get(FIELD_PAYMENT_PERIOD_YEARS)
     if product_name is None and payment_mode is None and payment_period is None:
         return None
+    default_modes = [
+        PAYMENT_MODE_ANNUAL,
+        PAYMENT_MODE_SEMI_ANNUAL,
+        PAYMENT_MODE_QUARTERLY,
+        PAYMENT_MODE_MONTHLY,
+        PAYMENT_MODE_SINGLE,
+    ]
     allowed_modes = {
-        item.lower()
-        for item in (context or {}).get(
-            "allowed_payment_modes",
-            ["annual", "semi_annual", "quarterly", "monthly", "single_premium"],
-        )
+        normalize_known_field(FIELD_PAYMENT_MODE, item)
+        for item in (context or {}).get("allowed_payment_modes", default_modes)
     }
     if payment_mode is not None and payment_mode not in allowed_modes:
         return False
-    if payment_mode == "single_premium":
+    if payment_mode == PAYMENT_MODE_SINGLE:
         return payment_period in (None, 1, "1")
     return payment_period is None or str(payment_period).isdigit()
 
 
 def _check_payment_mode_exclusive(fields: Mapping[str, Any]) -> bool | None:
-    checkboxes = fields.get("checkboxes")
+    checkboxes = fields.get(FIELD_CHECKBOXES)
     if not isinstance(checkboxes, Mapping):
         return None
-    payment_mode_keys = ["annual", "semi_annual", "quarterly", "monthly", "single_premium"]
-    selected = sum(
-        1
-        for key in payment_mode_keys
-        if normalize_checkbox_value(checkboxes.get(f"payment_mode.{key}")) is True
-    )
+    payment_mode_keys = [
+        CHECKBOX_PAYMENT_ANNUAL,
+        CHECKBOX_PAYMENT_SEMI_ANNUAL,
+        CHECKBOX_PAYMENT_QUARTERLY,
+        CHECKBOX_PAYMENT_MONTHLY,
+        CHECKBOX_PAYMENT_SINGLE,
+    ]
+    selected = sum(1 for key in payment_mode_keys if normalize_checkbox_value(checkboxes.get(key)) is True)
     return selected <= 1
 
 
 def _check_auto_debit_account(fields: Mapping[str, Any]) -> bool | None:
-    checkboxes = fields.get("checkboxes")
+    checkboxes = fields.get(FIELD_CHECKBOXES)
     if not isinstance(checkboxes, Mapping):
         return None
-    auto_debit_enabled = normalize_checkbox_value(checkboxes.get("payment_mode.auto_debit"))
+    auto_debit_enabled = normalize_checkbox_value(checkboxes.get(CHECKBOX_AUTO_DEBIT))
     if auto_debit_enabled is not True:
         return None
-    account_value = fields.get("auto_debit_account") or fields.get("bank_account_number")
+    account_value = fields.get(FIELD_AUTO_DEBIT_ACCOUNT)
     return isinstance(account_value, str) and bool(account_value.strip())

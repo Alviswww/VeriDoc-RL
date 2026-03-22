@@ -21,12 +21,12 @@ def test_form_input_round_trip() -> None:
 def test_form_output_round_trip() -> None:
     output = FormOutput(
         sample_id="sample-1",
-        fields={"policyholder_name": "张三"},
+        fields={"投保人姓名": "张三"},
         validations=[
             ValidationResult(
-                rule_id="required.policyholder_name",
+                rule_id="必填.投保人姓名",
                 status="pass",
-                message="policyholder_name is present",
+                message="投保人姓名已填写。",
             )
         ],
     )

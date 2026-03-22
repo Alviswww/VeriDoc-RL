@@ -2,6 +2,21 @@
 
 from dataclasses import dataclass
 
+from veridoc_rl.form_spec import (
+    RULE_CHECKBOX_AUTO_DEBIT_REQUIRES_ACCOUNT,
+    RULE_CHECKBOX_PAYMENT_MODE_EXCLUSIVE,
+    RULE_CONSISTENCY_BENEFICIARY_RATIO_SUM,
+    RULE_CONSISTENCY_BIRTH_DATE_VS_ID,
+    RULE_CONSISTENCY_PRODUCT_PAYMENT,
+    RULE_CONSISTENCY_RELATION,
+    RULE_FORMAT_APPLICATION_DATE,
+    RULE_FORMAT_POLICYHOLDER_ID_NUMBER,
+    RULE_FORMAT_POLICYHOLDER_PHONE,
+    RULE_REQUIRED_INSURED_NAME,
+    RULE_REQUIRED_POLICYHOLDER_ID_NUMBER,
+    RULE_REQUIRED_POLICYHOLDER_NAME,
+)
+
 
 @dataclass(frozen=True)
 class RuleDefinition:
@@ -12,64 +27,64 @@ class RuleDefinition:
 
 RULES: tuple[RuleDefinition, ...] = (
     RuleDefinition(
-        rule_id="required.policyholder_name",
-        category="required",
-        description="Policyholder name must be present.",
+        rule_id=RULE_REQUIRED_POLICYHOLDER_NAME,
+        category="必填",
+        description="投保人姓名必须存在。",
     ),
     RuleDefinition(
-        rule_id="required.policyholder_id_number",
-        category="required",
-        description="Policyholder ID number must be present.",
+        rule_id=RULE_REQUIRED_POLICYHOLDER_ID_NUMBER,
+        category="必填",
+        description="投保人证件号码必须存在。",
     ),
     RuleDefinition(
-        rule_id="required.insured_name",
-        category="required",
-        description="Insured name must be present.",
+        rule_id=RULE_REQUIRED_INSURED_NAME,
+        category="必填",
+        description="被保人姓名必须存在。",
     ),
     RuleDefinition(
-        rule_id="format.policyholder_phone",
-        category="format",
-        description="Policyholder phone must normalize to an 11-digit number.",
+        rule_id=RULE_FORMAT_POLICYHOLDER_PHONE,
+        category="格式",
+        description="投保人联系电话必须可标准化为 11 位手机号。",
     ),
     RuleDefinition(
-        rule_id="format.policyholder_id_number",
-        category="format",
-        description="Policyholder ID number must satisfy the expected format.",
+        rule_id=RULE_FORMAT_POLICYHOLDER_ID_NUMBER,
+        category="格式",
+        description="投保人证件号码必须满足合法格式。",
     ),
     RuleDefinition(
-        rule_id="format.application_date",
-        category="format",
-        description="Application date must normalize to YYYY-MM-DD.",
+        rule_id=RULE_FORMAT_APPLICATION_DATE,
+        category="格式",
+        description="申请日期必须可标准化为 YYYY-MM-DD。",
     ),
     RuleDefinition(
-        rule_id="consistency.birth_date_vs_id_number",
-        category="consistency",
-        description="Birth date must match the birth date encoded in the ID number.",
+        rule_id=RULE_CONSISTENCY_BIRTH_DATE_VS_ID,
+        category="一致性",
+        description="被保人出生日期必须与证件号码中的生日一致。",
     ),
     RuleDefinition(
-        rule_id="consistency.beneficiary_ratio_sum",
-        category="consistency",
-        description="Beneficiary ratios must sum to 100.",
+        rule_id=RULE_CONSISTENCY_BENEFICIARY_RATIO_SUM,
+        category="一致性",
+        description="受益比例合计必须为 100。",
     ),
     RuleDefinition(
-        rule_id="consistency.policyholder_insured_relation",
-        category="consistency",
-        description="Policyholder-to-insured relation must be in the allowed set.",
+        rule_id=RULE_CONSISTENCY_RELATION,
+        category="一致性",
+        description="投被保人关系必须落在允许集合中。",
     ),
     RuleDefinition(
-        rule_id="consistency.product_payment_combo",
-        category="consistency",
-        description="Product and payment attributes must form a valid combination.",
+        rule_id=RULE_CONSISTENCY_PRODUCT_PAYMENT,
+        category="一致性",
+        description="产品和缴费属性必须组成有效组合。",
     ),
     RuleDefinition(
-        rule_id="checkbox.payment_mode_exclusive",
-        category="checkbox",
-        description="Mutually exclusive payment mode checkboxes must not conflict.",
+        rule_id=RULE_CHECKBOX_PAYMENT_MODE_EXCLUSIVE,
+        category="勾选",
+        description="缴费方式勾选项必须互斥，不可同时冲突。",
     ),
     RuleDefinition(
-        rule_id="checkbox.auto_debit_requires_account",
-        category="checkbox",
-        description="Auto-debit selection requires account information.",
+        rule_id=RULE_CHECKBOX_AUTO_DEBIT_REQUIRES_ACCOUNT,
+        category="勾选",
+        description="若勾选自动扣款，必须填写扣款账户。",
     ),
 )
 

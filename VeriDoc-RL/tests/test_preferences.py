@@ -17,26 +17,26 @@ def _reference_record() -> dict[str, object]:
         "reference": {
             "sample_id": "sample-pref",
             "fields": {
-                "policyholder_name": "张三",
-                "policyholder_phone": "13800138000",
-                "policyholder_id_number": "440101199001011234",
-                "insured_name": "张三",
-                "insured_id_number": "440101199001011234",
-                "insured_birth_date": "1990-01-01",
-                "relation_policyholder_to_insured": "self",
-                "payment_mode": "annual",
-                "payment_period_years": 20,
-                "checkboxes": {
-                    "payment_mode.annual": True,
-                    "payment_mode.monthly": False,
-                    "payment_mode.auto_debit": False,
+                "投保人姓名": "张三",
+                "投保人联系电话": "13800138000",
+                "投保人证件号码": "440101199001011234",
+                "被保人姓名": "张三",
+                "被保人证件号码": "440101199001011234",
+                "被保人出生日期": "1990-01-01",
+                "投被保人关系": "本人",
+                "缴费方式": "年缴",
+                "缴费年期": 20,
+                "勾选项": {
+                    "缴费方式.年缴": True,
+                    "缴费方式.月缴": False,
+                    "缴费方式.自动扣款": False,
                 },
             },
             "validations": [
                 {
-                    "rule_id": "required.policyholder_name",
+                    "rule_id": "必填.投保人姓名",
                     "status": "pass",
-                    "message": "policyholder_name is present",
+                    "message": "投保人姓名已填写。",
                 }
             ],
         },
@@ -56,26 +56,26 @@ def test_build_preference_pairs_selects_best_candidate() -> None:
             "prediction": {
                 "sample_id": "sample-pref",
                 "fields": {
-                    "policyholder_name": "张三",
-                    "policyholder_phone": "",
-                    "policyholder_id_number": "440101199001011234",
-                    "insured_name": "张三",
-                    "insured_id_number": "440101199001011234",
-                    "insured_birth_date": "1991-01-01",
-                    "relation_policyholder_to_insured": "self",
-                    "payment_mode": "annual",
-                    "payment_period_years": 20,
-                    "checkboxes": {
-                        "payment_mode.annual": True,
-                        "payment_mode.monthly": True,
-                        "payment_mode.auto_debit": False,
+                    "投保人姓名": "张三",
+                    "投保人联系电话": "",
+                    "投保人证件号码": "440101199001011234",
+                    "被保人姓名": "张三",
+                    "被保人证件号码": "440101199001011234",
+                    "被保人出生日期": "1991-01-01",
+                    "投被保人关系": "本人",
+                    "缴费方式": "年缴",
+                    "缴费年期": 20,
+                    "勾选项": {
+                        "缴费方式.年缴": True,
+                        "缴费方式.月缴": True,
+                        "缴费方式.自动扣款": False,
                     },
                 },
                 "validations": [
                     {
-                        "rule_id": "required.policyholder_name",
+                        "rule_id": "必填.投保人姓名",
                         "status": "pass",
-                        "message": "policyholder_name is present",
+                        "message": "投保人姓名已填写。",
                     }
                 ],
             },
@@ -114,7 +114,7 @@ def test_preference_cli_writes_jsonl(tmp_path: Path) -> None:
                         "candidate_id": "bad",
                         "prediction": {
                             "sample_id": "sample-pref",
-                            "fields": {"policyholder_name": ""},
+                            "fields": {"投保人姓名": ""},
                             "validations": [],
                         },
                     },

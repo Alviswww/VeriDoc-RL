@@ -32,7 +32,7 @@ def test_generated_record_contains_bucket_metadata() -> None:
     assert record["task_type"] == "SFT_gold"
     assert record["metadata"]["bucket"]["template_family"] == "template_c"
     statuses = {item["rule_id"]: item["status"] for item in record["reference"]["validations"]}
-    assert statuses["checkbox.payment_mode_exclusive"] == "fail"
+    assert statuses["勾选.缴费方式互斥"] == "fail"
 
 
 def test_export_jsonl_writes_records(tmp_path: Path) -> None:
@@ -46,6 +46,15 @@ def test_export_jsonl_writes_records(tmp_path: Path) -> None:
     payload = json.loads(lines[0])
     assert "input" in payload
     assert "reference" in payload
+
+
+def test_occluded_region_does_not_hallucinate_hidden_address() -> None:
+    sample = SyntheticFormGenerator(seed=7).generate_sample(
+        sample_index=0,
+        hard_case_type="occluded_region",
+    )
+
+    assert "投保人地址" not in sample.reference.fields
 
 
 def test_build_training_record_supports_prompt_only_data() -> None:
@@ -80,6 +89,7 @@ def test_cli_main_generates_output_file(tmp_path: Path) -> None:
     first = json.loads(lines[0])
     assert first["metadata"]["bucket"]["template_family"] == "template_a"
     assert first["metadata"]["bucket"]["ocr_noise_level"] == "low"
+    assert any("投保人" in key or key == "勾选项" for key in first["reference"]["fields"])
 
 
 def test_cli_main_supports_task_type(tmp_path: Path) -> None:

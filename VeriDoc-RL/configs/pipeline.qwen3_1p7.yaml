@@ -16,13 +16,21 @@ generation:
   candidate_count: 4
   temperature: 0.8
   top_p: 0.95
-  max_new_tokens: 1024
+  max_new_tokens: 2048
+  disable_thinking: true
+  preference_source: "sft_adapter"
+  preference_adapter_name: "sft_adapter"
+  preference_disable_thinking: true
+  preference_extra_body:
+    chat_template_kwargs:
+      enable_thinking: false
 
 pipeline:
   enable_baseline_eval: true
   enable_sft: true
   enable_dpo: true
   enable_rl: true
+  enable_post_train_eval: false
   rl_algorithm: "grpo"
 
 execution:

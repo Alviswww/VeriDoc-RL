@@ -149,7 +149,6 @@ def execute_trl_sft_training(config: TrlSFTConfig) -> int:
         evaluation_strategy="steps" if eval_dataset is not None else "no",
         eval_steps=config.save_steps if eval_dataset is not None else None,
         bf16=torch_dtype is not None and str(torch_dtype).endswith("bfloat16"),
-        fp16=torch_dtype is not None and str(torch_dtype).endswith("float16"),
         remove_unused_columns=False,
         report_to=[],
     )

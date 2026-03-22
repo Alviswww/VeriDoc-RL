@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from veridoc_rl.form_spec import canonicalize_fields, canonicalize_validations
 from veridoc_rl.evaluation.metrics import canonicalize_field_value, evaluate_prediction
 from veridoc_rl.rewards import list_reward_profiles, score_verifier_results
 from veridoc_rl.verifiers import BaseVerifier, VerificationResult, run_verifier_suite
@@ -392,8 +393,8 @@ def _diff_fields(
     prediction_fields: Any,
     reference_fields: Any,
 ) -> tuple[list[str], list[str]]:
-    prediction_mapping = prediction_fields if isinstance(prediction_fields, Mapping) else {}
-    reference_mapping = reference_fields if isinstance(reference_fields, Mapping) else {}
+    prediction_mapping = canonicalize_fields(prediction_fields) if isinstance(prediction_fields, Mapping) else {}
+    reference_mapping = canonicalize_fields(reference_fields) if isinstance(reference_fields, Mapping) else {}
 
     missing_fields = [
         key
@@ -426,6 +427,7 @@ def _diff_validations(
 def _collect_validation_statuses(validations: Any) -> dict[str, str]:
     if not isinstance(validations, list):
         return {}
+    validations = canonicalize_validations(validations)
     return {
         str(item["rule_id"]): str(item.get("status"))
         for item in validations
@@ -459,7 +461,7 @@ def _classify_error_taxonomy(
     failed_cross_checks = set(
         cross_field_result.details.get("failed_checks", []) if cross_field_result else []
     )
-    if "policyholder_insured_relation" in failed_cross_checks:
+    if "投被保人关系" in failed_cross_checks:
         categories.append("relation_error")
 
     checkbox_result = verifier_map.get("checkbox_logic_reward")

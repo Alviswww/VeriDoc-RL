@@ -4,6 +4,7 @@ import json
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from veridoc_rl.form_spec import canonicalize_fields, canonicalize_validations
 from veridoc_rl.normalizers import normalize_known_field
 from veridoc_rl.schema import validate_prediction_payload
 
@@ -140,6 +141,8 @@ def evaluate_prediction(
     reference_fields = reference.get("fields", {})
     if not isinstance(prediction_fields, Mapping) or not isinstance(reference_fields, Mapping):
         raise ValueError("Both prediction and reference must expose a 'fields' mapping.")
+    prediction_fields = canonicalize_fields(prediction_fields)
+    reference_fields = canonicalize_fields(reference_fields)
 
     validations = prediction.get("validations", [])
     if not isinstance(validations, list):
@@ -147,6 +150,8 @@ def evaluate_prediction(
     reference_validations = reference.get("validations", [])
     if not isinstance(reference_validations, list):
         raise ValueError("Reference 'validations' must be a list.")
+    validations = canonicalize_validations(validations)
+    reference_validations = canonicalize_validations(reference_validations)
 
     field_metrics = compute_field_level_metrics(prediction_fields, reference_fields)
     return {

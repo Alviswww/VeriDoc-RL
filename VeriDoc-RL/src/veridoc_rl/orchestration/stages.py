@@ -59,6 +59,8 @@ def run_baseline_stage(spec: PipelineSpec, paths: PipelinePaths, state: Pipeline
             top_p=spec.generation.top_p,
             max_new_tokens=spec.generation.max_new_tokens,
             system_prompt=spec.generation.system_prompt,
+            disable_thinking=spec.generation.disable_thinking,
+            extra_body=dict(spec.generation.extra_body),
         ),
     )
     candidate_path = paths.stage_candidates_path(stage_name)
@@ -115,7 +117,7 @@ def run_sft_stage(spec: PipelineSpec, paths: PipelinePaths, state: PipelineState
     stage.manifest_path = str(paths.stage_manifest_path(stage_name))
     stage.runtime_plan_path = str(paths.stage_runtime_plan_path(stage_name))
     stage.checkpoint_path = str(paths.stage_checkpoint_dir(stage_name))
-    if spec.execution.execute_training and not spec.execution.prepare_only:
+    if spec.execution.execute_training and not spec.execution.prepare_only and spec.pipeline.enable_post_train_eval:
         _run_checkpoint_eval(
             spec=spec,
             paths=paths,
@@ -173,7 +175,7 @@ def run_dpo_stage(spec: PipelineSpec, paths: PipelinePaths, state: PipelineState
     stage.manifest_path = str(paths.stage_manifest_path(stage_name))
     stage.runtime_plan_path = str(paths.stage_runtime_plan_path(stage_name))
     stage.checkpoint_path = str(paths.stage_checkpoint_dir(stage_name))
-    if spec.execution.execute_training and not spec.execution.prepare_only:
+    if spec.execution.execute_training and not spec.execution.prepare_only and spec.pipeline.enable_post_train_eval:
         _run_checkpoint_eval(
             spec=spec,
             paths=paths,
@@ -225,7 +227,7 @@ def run_rl_stage(spec: PipelineSpec, paths: PipelinePaths, state: PipelineState)
     stage.manifest_path = str(paths.stage_manifest_path(stage_name))
     stage.runtime_plan_path = str(paths.stage_runtime_plan_path(stage_name))
     stage.checkpoint_path = str(paths.stage_checkpoint_dir(stage_name))
-    if spec.execution.execute_training and not spec.execution.prepare_only:
+    if spec.execution.execute_training and not spec.execution.prepare_only and spec.pipeline.enable_post_train_eval:
         _run_checkpoint_eval(
             spec=spec,
             paths=paths,
@@ -324,6 +326,7 @@ def _run_checkpoint_eval(
             precision_config=dict(_load_matrix(spec).finetune.get("precision", {}))
             if isinstance(_load_matrix(spec).finetune.get("precision"), dict)
             else {},
+            disable_thinking=spec.generation.disable_thinking,
         ),
     )
     prediction_path = paths.stage_predictions_path(stage_name)
@@ -334,13 +337,28 @@ def _run_checkpoint_eval(
 
 
 def _ensure_preference_candidates(*, spec: PipelineSpec, paths: PipelinePaths) -> Path:
-    baseline_path = paths.stage_candidates_path("baseline")
-    if baseline_path.exists():
-        return baseline_path
+    preference_stage_name = "phase_b_dpo"
+    preference_path = paths.stage_candidates_path(preference_stage_name)
+    if preference_path.exists():
+        return preference_path
+    if spec.generation.preference_source == "baseline":
+        baseline_path = paths.stage_candidates_path("baseline")
+        if baseline_path.exists():
+            return baseline_path
+        target_model = spec.model.baseline
+    else:
+        adapter_path = paths.stage_checkpoint_dir("phase_a_sft")
+        if not adapter_path.exists():
+            raise RuntimeError(
+                "DPO preference generation requires a Phase A SFT checkpoint, "
+                f"but it was not found at {adapter_path}."
+            )
+        adapter_name = spec.generation.preference_adapter_name
+        target_model = spec.generation.preference_model or f"{spec.model.baseline}:{adapter_name}"
     candidate_records = generate_candidates_for_records(
         load_jsonl(Path(spec.data.sft_gold_path)),
         config=CandidateGenerationConfig(
-            model=spec.model.baseline,
+            model=target_model,
             backend=spec.model.inference_backend,
             api_base=spec.model.inference_api_base,
             api_key=spec.model.inference_api_key,
@@ -349,10 +367,12 @@ def _ensure_preference_candidates(*, spec: PipelineSpec, paths: PipelinePaths) -
             top_p=spec.generation.top_p,
             max_new_tokens=spec.generation.max_new_tokens,
             system_prompt=spec.generation.system_prompt,
+            disable_thinking=spec.generation.preference_disable_thinking,
+            extra_body=dict(spec.generation.preference_extra_body),
         ),
     )
-    export_candidate_jsonl(baseline_path, candidate_records)
-    return baseline_path
+    export_candidate_jsonl(preference_path, candidate_records)
+    return preference_path
 
 
 def _can_skip(stage: Any, *, required: Path, resume: bool) -> bool:

@@ -87,14 +87,14 @@ def test_prepare_dpo_corpus_uses_preference_structure() -> None:
         "chosen": {
             "prediction": {
                 "sample_id": "sample-pref",
-                "fields": {"policyholder_name": "张三"},
+                "fields": {"投保人姓名": "张三"},
                 "validations": [],
             }
         },
         "rejected": {
             "prediction": {
                 "sample_id": "sample-pref",
-                "fields": {"policyholder_name": ""},
+                "fields": {"投保人姓名": ""},
                 "validations": [],
             }
         },
@@ -104,7 +104,7 @@ def test_prepare_dpo_corpus_uses_preference_structure() -> None:
 
     assert corpus[0]["stage"] == "phase_b_dpo"
     assert corpus[0]["chosen_candidate_id"] == "good"
-    assert '"policyholder_name"' in corpus[0]["chosen"]
+    assert '"投保人姓名"' in corpus[0]["chosen"]
 
 
 def test_generate_training_manifests_from_matrix() -> None:

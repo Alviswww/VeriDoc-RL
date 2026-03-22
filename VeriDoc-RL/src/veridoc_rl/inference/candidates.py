@@ -28,6 +28,8 @@ class CandidateGenerationConfig:
     max_new_tokens: int = 1024
     timeout_seconds: int = 120
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
+    disable_thinking: bool = True
+    extra_body: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -90,6 +92,10 @@ def request_chat_candidates(
         "max_tokens": config.max_new_tokens,
         "n": config.num_candidates,
     }
+    if config.disable_thinking:
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+    if config.extra_body:
+        payload.update(dict(config.extra_body))
     response_payload = _post_json(
         url=f"{config.api_base.rstrip('/')}/chat/completions",
         payload=payload,
@@ -168,6 +174,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         timeout_seconds=int(args.timeout_seconds),
         system_prompt=args.system_prompt,
+        disable_thinking=True,
+        extra_body=None,
     )
     export_candidate_jsonl(
         args.output_path,
